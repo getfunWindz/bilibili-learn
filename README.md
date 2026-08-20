@@ -1,35 +1,110 @@
-# bilibili-learn
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%"
+       alt="bilibili-learn：把 B 站学习视频自动变成中文详解学习笔记的命令行工具">
+</p>
 
-将 bilibili 学习视频总结为中文详解报告（Markdown），保存到百度同步盘，多设备可见。
+**bilibili-learn** 把 B 站学习视频自动变成**中文详解学习笔记**：给出视频链接、BV 号或视频名称，自动抓取字幕（或 Whisper 转写），生成带详解、术语表、原话摘录的学习报告，归档到本地/同步盘，随时多设备可读。
 
-## 功能
+> 一个真实产出示例（《Python入门半小时，剩下靠AI》，UP 主 王小二数据分析，21 分钟视频 → 17KB 报告）：
+>
+> `bilibili学习笔记/王小二数据分析/2026-08-20_Python入门半小时，剩下靠AI/report.md`
+> 包含：一句话总结 → 10 节分节详解（要点+解释+例子）→ 22 条术语表 → 原话摘录（附时间点）→ 学习路径建议
 
-- 输入：视频**链接 / BV号 / av号 / 名称 / UP主**
-- 获取：字幕优先（官方接口，含 AI 字幕），无字幕时 faster-whisper 本地转写兜底（CPU/GPU 自适应，无需系统 ffmpeg）
-- 输出：`video_info.json`（元信息）+ `subtitle.txt`（字幕全文）+ `report_template.md`（报告骨架）
-- 报告正文由 agent 撰写，交付到 `C:\data\BaiduSyncdisk\bilibili学习笔记\YYYY-MM-DD_<标题>\`
-
-## 命令
-
-```bash
-python scripts/bili.py resolve <输入>              # 解析链接/BV/av → bvid/page
-python scripts/bili.py search <关键词> [--limit N]  # 名称/UP主 → 候选列表
-python scripts/bili.py run <输入> [--page N] --out <目录> [--no-whisper] [--pick N]
-```
-
-## 依赖
+## 快速开始
 
 ```bash
-pip install -r requirements.txt   # faster-whisper 可延后按需安装
+pip install -r requirements.txt
+
+# 准备登录 cookie（搜索与 AI 字幕需要）：
+#   把 SESSDATA=xxx 写入 scripts/.bili_cookie（已 gitignore，不会泄露）
+
+# 单视频总结
+python scripts/bili.py run "BV1xHn9z8EPX"
+
+# 批量多 P（推荐学习场景）
+python scripts/bili.py run "BV1rpWjevEip" --pages "1-50" --out "D:\学习笔记"
+
+# 从已有字幕重新生成报告骨架 / 导出为 Word
+python scripts/bili.py report "D:\学习笔记\王小二数据分析\2026-08-20_xxx"
+python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_xxx" --format docx
 ```
 
-## 国内网络说明
+> ⚠️ 国内网络首次下载 Whisper 模型需走镜像：
+> `HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 python scripts/bili.py ...`
 
-- Whisper 模型首次下载需走 HF 镜像：`HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 python scripts/bili.py ...`
-- 登录 cookie（搜索/AI 字幕需要）：把 `SESSDATA=xxx` 写入 `scripts/.bili_cookie`（已 gitignore）或设置环境变量 `BILI_COOKIE`
+## 为什么不同
 
-## 开发
+| 能力 | 说明 |
+|------|------|
+| 🎯 输入自由 | 链接 / BV / av / 名称 / UP 主 都能定位视频 |
+| 🛡️ 字幕三防线 | 两次一致性 + 时长覆盖率 + 上限校验——拦截 bilibili 接口的错乱/降级字幕，宁可慢不可错 |
+| 🔊 Whisper 兜底 | 无字幕视频自动转写：GPU 误报回退 CPU、VAD 滤空自动重试、语气词清洗 |
+| 📚 批量多 P | `--pages "1-100"` 断点续跑、失败不中断、进度与预计剩余时间 |
+| 🧠 相关性聚类 | 相关分P合并为总报告（按P分章），无关独立成篇，不一刀切 |
+| 📤 随处可读 | 按 UP 主归档到同步盘，导出 Markdown / DOCX / HTML |
 
-```bash
-python -m pytest tests/ -v
+## 工作原理
+
+<p align="center">
+  <img src="./assets/readme/workflow.svg" width="100%"
+       alt="bilibili-learn 工作流程：输入→获取内容（字幕三防线/Whisper兜底）→批量多P→相关性分析→报告">
+</p>
+
+1. **定位**：链接/BV/av 直接解析；名称/UP 主走官方搜索（wbi 签名）
+2. **获取**：AI 字幕优先（三防线校验），无字幕降级 faster-whisper 本地转写（CPU/GPU 自适应，无需系统 ffmpeg）
+3. **批量**：多 P 循环处理，每 P 完成后增量写汇总，中断可 `--resume` 续跑
+4. **分析**：agent 读取各 P 字幕做相关性聚类，决定总报告（按P分章）或独立报告
+5. **交付**：报告写入同步盘 `bilibili学习笔记/<UP主>/`，可按需导出 Word/HTML
+
+## 命令参考
+
+| 命令 | 作用 |
+|------|------|
+| `bili resolve <输入>` | 解析链接/BV/av → bvid/页码 |
+| `bili search <关键词>` | 搜索视频候选（需登录 cookie） |
+| `bili run <输入> [--page N \| --pages "1-10" \| --all]` | 获取字幕/转写并落盘；`--resume` 断点续跑；`--lang ja/en` 多语言字幕；`--model medium` 转写模型 |
+| `bili report <目录>` | 从已有字幕重新生成报告骨架（改模板后无需重抓） |
+| `bili export <目录> --format html\|docx` | 报告导出 |
+
+## 配置（可选）
+
+首次运行自动生成 `scripts/config.json`：
+
+```json
+{
+  "out_dir": "",              // 默认输出目录（--out 未传时使用）
+  "whisper_model": "small",   // tiny/small/medium/large-v3
+  "hf_endpoint": "",          // HF 镜像（如 https://hf-mirror.com）
+  "hf_disable_xet": true      // 镜像站必需
+}
 ```
+
+优先级：**CLI 参数 > 环境变量 > config.json > 默认值**。
+
+## 报告结构
+
+```
+一句话总结
+分节详解（按视频内容分段：每节 = 要点 + 详细解释 + 例子）★核心
+关键概念 / 术语解释表
+金句与重要观点
+原话摘录（5~10 条带时间点的教学性原话）
+学习收获与行动建议
+```
+
+## 测试与安全
+
+- **74 个单元测试**：`python -m pytest tests/ -v`（全部 mock 网络，离线可跑）
+- **登录 cookie 仅存于本地** `scripts/.bili_cookie`（gitignore），上传仓库时已排除；代码中只有 `SESSDATA=xxx` 占位示例
+- 无 cookie 时降级可用：视频信息 + Whisper 转写仍正常工作，仅搜索与 AI 字幕受限
+
+## 环境要求
+
+- Python 3.10+
+- requests（字幕/搜索 API）
+- faster-whisper（可选：无字幕视频的本地转写；PyAV 自带 FFmpeg 库，无需系统安装 ffmpeg）
+- python-docx（可选：DOCX 导出）
+
+## 致谢与许可
+
+项目源于个人学习需求：B 站教学视频多、倍速看记不住，于是做了这个「视频 → 学习笔记」的自动化流水线。欢迎 Issues 交流想法。

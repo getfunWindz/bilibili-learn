@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320"
+     role="img" aria-labelledby="title desc">
+  <title id="title">bilibili-learn 工作原理</title>
+  <desc id="desc">流程：输入视频链接或名称，定位视频，获取字幕（三道防线校验）或 Whisper 转写兜底，批量处理多分P，按相关性聚类生成中文详解报告并导出。</desc>
+
+  <rect width="1200" height="320" rx="26" fill="#0B0E14"/>
+
+  <!-- 阶段 1：输入 -->
+  <g transform="translate(56 64)">
+    <rect x="0" y="0" width="200" height="110" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+    <text x="100" y="32" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="17" fill="#FB7299">输入</text>
+    <text x="100" y="62" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">链接 / BV / av</text>
+    <text x="100" y="88" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">名称 / UP 主</text>
+  </g>
+  <g transform="translate(256 114)">
+    <path d="M0 6 h28" stroke="#00A1D6" stroke-width="2.5"/>
+    <polygon points="32,6 24,1 24,11" fill="#00A1D6"/>
+  </g>
+
+  <!-- 阶段 2：获取 -->
+  <g transform="translate(288 64)">
+    <rect x="0" y="0" width="260" height="110" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+    <text x="130" y="32" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="17" fill="#FB7299">获取内容</text>
+    <text x="130" y="60" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">AI 字幕 <tspan font-family="ui-monospace, Menlo, monospace" font-size="15" fill="#00A1D6">三防线校验</tspan></text>
+    <text x="130" y="88" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">无字幕 → <tspan fill="#8A93A5">Whisper</tspan> 兜底</text>
+  </g>
+  <g transform="translate(548 114)">
+    <path d="M0 6 h28" stroke="#00A1D6" stroke-width="2.5"/>
+    <polygon points="32,6 24,1 24,11" fill="#00A1D6"/>
+  </g>
+
+  <!-- 阶段 3：批量 -->
+  <g transform="translate(580 64)">
+    <rect x="0" y="0" width="200" height="110" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+    <text x="100" y="32" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="17" fill="#FB7299">批量多 P</text>
+    <text x="100" y="60" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">--all / --pages</text>
+    <text x="100" y="88" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">断点续跑 · 失败不中断</text>
+  </g>
+  <g transform="translate(780 114)">
+    <path d="M0 6 h28" stroke="#00A1D6" stroke-width="2.5"/>
+    <polygon points="32,6 24,1 24,11" fill="#00A1D6"/>
+  </g>
+
+  <!-- 阶段 4：分析 -->
+  <g transform="translate(812 64)">
+    <rect x="0" y="0" width="200" height="110" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+    <text x="100" y="32" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="17" fill="#FB7299">相关性分析</text>
+    <text x="100" y="60" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">相关 → 总报告</text>
+    <text x="100" y="88" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">无关 → 独立成篇</text>
+  </g>
+  <g transform="translate(1012 114)">
+    <path d="M0 6 h28" stroke="#00A1D6" stroke-width="2.5"/>
+    <polygon points="32,6 24,1 24,11" fill="#00A1D6"/>
+  </g>
+
+  <!-- 阶段 5：报告 -->
+  <g transform="translate(1044 64)">
+    <rect x="0" y="0" width="100" height="110" rx="12" fill="#1A2233" stroke="#FB7299" stroke-width="2"/>
+    <text x="50" y="40" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="17" fill="#FB7299">报告</text>
+    <text x="50" y="68" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#F5F7FA">Markdown</text>
+    <text x="50" y="92" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#F5F7FA">DOCX / HTML</text>
+  </g>
+
+  <!-- 底部：产物 -->
+  <g transform="translate(56 224)">
+    <rect x="0" y="0" width="1088" height="52" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+    <text x="24" y="33" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#8A93A5">
+      <tspan fill="#F5F7FA">bilibili学习笔记/</tspan>&lt;UP主&gt;/&lt;日期&gt;_&lt;标题&gt;/<tspan fill="#00A1D6">report.md</tspan> → 百度同步盘 · 多设备可读</text>
+  </g>
+</svg>
