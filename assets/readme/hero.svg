@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360"
+     role="img" aria-labelledby="title desc">
+  <title id="title">bilibili-learn</title>
+  <desc id="desc">把 B 站学习视频自动变成中文详解学习笔记的命令行工具：终端演示批量获取字幕并生成报告。</desc>
+
+  <rect width="1200" height="360" rx="26" fill="#0B0E14"/>
+
+  <!-- 左：标题区 -->
+  <g id="title-block" transform="translate(56 52)">
+    <text x="0" y="0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="17" fill="#8A93A5" letter-spacing="4">BILIBILI LEARNING TOOL</text>
+
+    <text x="0" y="76" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="62" font-weight="700" fill="#F5F7FA">bilibili-learn</text>
+
+    <text x="0" y="138" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="29" fill="#F5F7FA">把 B 站学习视频自动变成</text>
+    <text x="0" y="176" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="29" fill="#F5F7FA"><tspan fill="#FB7299">中文详解学习笔记</tspan>，多设备同步可读</text>
+
+    <text x="0" y="240" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" fill="#8A93A5">Python · CLI · 74 tests · v2.2</text>
+
+    <!-- 流程条 -->
+    <g transform="translate(0 276)">
+      <rect x="0" y="0" width="196" height="46" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+      <text x="16" y="29" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" fill="#F5F7FA">视频链接</text>
+      <path d="M206 23 h22" stroke="#00A1D6" stroke-width="2.5"/>
+      <polygon points="232,23 224,18 224,28" fill="#00A1D6"/>
+      <rect x="240" y="0" width="196" height="46" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+      <text x="256" y="29" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" fill="#F5F7FA">字幕 / Whisper</text>
+      <path d="M446 23 h22" stroke="#00A1D6" stroke-width="2.5"/>
+      <polygon points="472,23 464,18 464,28" fill="#00A1D6"/>
+      <rect x="480" y="0" width="196" height="46" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+      <text x="496" y="29" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" fill="#F5F7FA">中文学习报告</text>
+    </g>
+  </g>
+
+  <!-- 右：终端面板（项目原生材料） -->
+  <g id="terminal" transform="translate(712 44)">
+    <rect x="0" y="0" width="432" height="272" rx="14" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
+    <circle cx="24" cy="24" r="6" fill="#FF5F57"/>
+    <circle cx="48" cy="24" r="6" fill="#FEBC2E"/>
+    <circle cx="72" cy="24" r="6" fill="#28C840"/>
+    <text x="216" y="29" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="14" fill="#8A93A5">bili run BV1xHn9z8EPX</text>
+
+    <text x="24" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#8A93A5">
+      <tspan fill="#FB7299">❯</tspan> bili run BV1xHn9z8EPX <tspan fill="#00A1D6">--all</tspan></text>
+    <text x="24" y="100" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#8A93A5">[1/3] 处理 P1（课前篇）……</text>
+    <text x="42" y="128" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#F5F7FA">→ ok（字幕，<tspan fill="#00A1D6">734</tspan> 行）</text>
+    <text x="24" y="156" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#8A93A5">批量完成：<tspan fill="#F5F7FA">3/3</tspan> P 成功</text>
+
+    <line x1="24" y1="180" x2="408" y2="180" stroke="#2A3142" stroke-width="1.5"/>
+
+    <text x="24" y="210" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#8A93A5">report.md</text>
+    <text x="24" y="238" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#F5F7FA">
+      <tspan fill="#00A1D6">##</tspan> 分节详解 · <tspan fill="#FB7299">##</tspan> 术语表 · <tspan fill="#8A93A5">##</tspan> 原话摘录</text>
+  </g>
+</svg>
