@@ -24,6 +24,11 @@ python scripts/bili.py run "BV1xHn9z8EPX"
 # 批量多 P（推荐学习场景）
 python scripts/bili.py run "BV1rpWjevEip" --pages "1-50" --out "D:\学习笔记"
 
+# 收藏夹直达（直接总结你收藏的视频）
+python scripts/bili.py favs                        # 列出全部收藏夹
+python scripts/bili.py run --fav "破蛋崽子" --pick 2 # 总结收藏夹第2个视频
+python scripts/bili.py run --fav 104335690 --all    # 按收藏夹id批量总结
+
 # 从已有字幕重新生成报告骨架 / 导出为 Word
 python scripts/bili.py report "D:\学习笔记\王小二数据分析\2026-08-20_xxx"
 python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_xxx" --format docx
@@ -62,7 +67,9 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 |------|------|
 | `bili resolve <输入>` | 解析链接/BV/av → bvid/页码 |
 | `bili search <关键词>` | 搜索视频候选（需登录 cookie） |
+| `bili favs` | 列出账号全部收藏夹（需登录 cookie） |
 | `bili run <输入> [--page N \| --pages "1-10" \| --all]` | 获取字幕/转写并落盘；`--resume` 断点续跑；`--lang ja/en` 多语言字幕；`--model medium` 转写模型 |
+| `bili run --fav <收藏夹名\|id> --pick N` | 直接总结收藏夹内第 N 个视频（输入参数可省略） |
 | `bili report <目录>` | 从已有字幕重新生成报告骨架（改模板后无需重抓） |
 | `bili export <目录> --format html\|docx` | 报告导出 |
 
