@@ -96,9 +96,12 @@ def render_template(info: dict) -> str:
 ### 段1｜[00:00-05:12] 段主题
 
 #### 知识点1：知识点名称（[02:30] 首次出现时间）
-- **要点**：一句话概括该知识点的核心
+- **定义**：官方/标准表述（正式定义或教科书式描述）
+- **通俗**：一句话人话解释（新手视角）
 - **细节**：2~4 条浓缩要点（只留知识本身，删除口播废话/寒暄/重复解释）
 - **例子**：视频中的代码/案例（如有）
+- **彩蛋**：原作者的趣味原话/小资讯/小tips（可选，有则填；增加学习趣味性）
+- **延伸**：出现的新概念（标注并解释其含义；可选，有则填）
 
 #### 知识点2：...
 （该时间段内原作者讲到的每个知识点都必须列出，不省略）
@@ -311,6 +314,22 @@ def render_batch_template(summary: dict) -> str:
     return "\n".join(lines)
 
 
+def _find_report_md(target: str) -> str:
+    """查找目录中的报告文件：report.md → <标题>_学习报告.md → report_template.md"""
+    for name in ("report.md",):
+        p = os.path.join(target, name)
+        if os.path.exists(p):
+            return p
+    import glob
+    hits = glob.glob(os.path.join(target, "*_学习报告.md"))
+    if hits:
+        return hits[0]
+    p = os.path.join(target, "report_template.md")
+    if os.path.exists(p):
+        return p
+    return ""
+
+
 def cmd_report(args):
     """从已有目录（单P/合集）重新生成报告模板，无需重新抓取"""
     target = args.target
@@ -332,11 +351,9 @@ def cmd_report(args):
 def cmd_export(args):
     """从报告目录导出 HTML/DOCX"""
     target = args.target
-    md_path = os.path.join(target, "report.md")
-    if not os.path.exists(md_path):
-        md_path = os.path.join(target, "report_template.md")
-    if not os.path.exists(md_path):
-        print(f"目录中没有 report.md / report_template.md：{target}", file=sys.stderr)
+    md_path = _find_report_md(target)
+    if not md_path:
+        print(f"目录中没有报告文件（report.md / <标题>_学习报告.md / report_template.md）：{target}", file=sys.stderr)
         sys.exit(1)
     md = open(md_path, encoding="utf-8").read()
     from export import md_to_html, export_docx
