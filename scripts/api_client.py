@@ -239,3 +239,25 @@ class ApiClient:
             if e.code == -101:
                 return False
             raise
+
+    def get_fav_folders(self) -> list:
+        """当前账号的收藏夹列表 → [{id, title, media_count}]；需登录"""
+        nav = self._get("/x/web-interface/nav", {})
+        mid = nav.get("mid") or 0
+        data = self._get("/x/v3/fav/folder/created/list-all", {"up_mid": mid})
+        out = []
+        for f in (data.get("list") or []):
+            out.append({"id": f["id"], "title": f.get("title", ""),
+                        "media_count": f.get("media_count", 0)})
+        return out
+
+    def get_fav_medias(self, media_id: int, pn: int = 1, ps: int = 20) -> list:
+        """收藏夹内容 → [{bvid, title, duration}]；ps 上限 20"""
+        ps = min(max(1, ps), 20)  # 接口上限 20，超出会被 -400 拒绝
+        data = self._get("/x/v3/fav/resource/list",
+                         {"media_id": media_id, "pn": pn, "ps": ps})
+        out = []
+        for m in (data.get("medias") or []):
+            out.append({"bvid": m.get("bvid", ""), "title": m.get("title", ""),
+                        "duration": m.get("duration", 0)})
+        return out
