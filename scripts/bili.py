@@ -101,7 +101,9 @@ def render_template(info: dict) -> str:
 - **细节**：2~4 条浓缩要点（只留知识本身，删除口播废话/寒暄/重复解释）
 - **例子**：视频中的代码/案例（如有）
 - **彩蛋**：原作者的趣味原话/小资讯/小tips（可选，有则填；增加学习趣味性）
-- **延伸**：出现的新概念（标注并解释其含义；可选，有则填）
+- **延伸**：相关概念的深入拓展（主流/高级知识点 2~4 条，每条 = 概念 + 使用场景/一句话解释，
+  如：列表→切片/列表推导式/排序 sort；字典→视图对象/合并 update/JSON 序列化；
+  函数→默认参数/lambda/装饰器；类→继承/多态/魔术方法；简单知识点 1 条或省略）
 
 #### 知识点2：...
 （该时间段内原作者讲到的每个知识点都必须列出，不省略）
@@ -367,6 +369,46 @@ def cmd_export(args):
     print(f"已导出：{out}")
 
 
+def cmd_favs(args, client: ApiClient = None):
+    """列出当前账号的收藏夹"""
+    client = client or ApiClient()
+    try:
+        folders = client.get_fav_folders()
+    except BiliError as e:
+        print(f"获取收藏夹失败：{e}（需要有效登录 cookie）", file=sys.stderr)
+        sys.exit(2)
+    if not folders:
+        print("没有收藏夹", file=sys.stderr)
+        sys.exit(1)
+    for i, f in enumerate(folders, 1):
+        print(f"{i}. [{f['id']}] {f['title']}（{f['media_count']}个视频）")
+
+
+def _resolve_fav(client: ApiClient, fav: str, pick: int):
+    """解析 --fav：按 id 或名称匹配收藏夹，返回 (bvid, title)"""
+    folders = client.get_fav_folders()
+    folder = None
+    if fav.isdigit():
+        folder = next((f for f in folders if str(f["id"]) == fav), None)
+    if folder is None:
+        folder = next((f for f in folders if fav in f["title"]), None)
+    if folder is None:
+        raise BiliError(-400, "未找到收藏夹：" + fav + "（现有：" + '，'.join(f['title'] for f in folders) + "）")
+    medias = client.get_fav_medias(folder["id"], pn=1, ps=20)
+    if pick > 20:  # 超出第一页：拉后续页
+        medias += client.get_fav_medias(folder["id"], pn=2, ps=20)
+    if pick > 40:
+        medias += client.get_fav_medias(folder["id"], pn=3, ps=20)
+    if not medias:
+        raise BiliError(-400, f"收藏夹「{folder['title']}」为空")
+    idx = pick - 1
+    if idx < 0 or idx >= len(medias):
+        raise BiliError(-400, f"收藏夹第 {pick} 个视频不存在（共 {len(medias)} 个）")
+    m = medias[idx]
+    print(f"收藏夹「{folder['title']}」第{pick}个：{m['title']}（{m['bvid']}）", file=sys.stderr)
+    return m["bvid"], m["title"]
+
+
 def cmd_run(args, client: ApiClient = None):
     client = client or ApiClient()
     cfg = config.load_config()
@@ -378,20 +420,28 @@ def cmd_run(args, client: ApiClient = None):
             print("  请更新 scripts/.bili_cookie（SESSDATA=xxx）或设置环境变量 BILI_COOKIE", file=sys.stderr)
     except Exception:
         pass  # 检测失败不阻断主流程
-    try:
-        spec = resolve_input(args.input)
-    except SearchNeeded:
+    if getattr(args, "fav", None):
         try:
-            results = client.search(args.input, limit=max(1, args.pick))
+            bvid, _t = _resolve_fav(client, args.fav, args.pick)
+            spec = resolve_input(bvid)
         except BiliError as e:
-            print(f"搜索失败：{e}（可能是风控，建议改用链接）", file=sys.stderr)
+            print(f"收藏夹解析失败：{e}", file=sys.stderr)
             sys.exit(2)
-        if not results:
-            print(f"未找到与「{args.input}」相关的视频", file=sys.stderr)
-            sys.exit(1)
-        hit = results[args.pick - 1]
-        print(f"名称搜索命中：{hit['title']}（{hit['bvid']}）")
-        spec = resolve_input(hit["bvid"])
+    else:
+        try:
+            spec = resolve_input(args.input)
+        except SearchNeeded:
+            try:
+                results = client.search(args.input, limit=max(1, args.pick))
+            except BiliError as e:
+                print(f"搜索失败：{e}（可能是风控，建议改用链接）", file=sys.stderr)
+                sys.exit(2)
+            if not results:
+                print(f"未找到与「{args.input}」相关的视频", file=sys.stderr)
+                sys.exit(1)
+            hit = results[args.pick - 1]
+            print(f"名称搜索命中：{hit['title']}（{hit['bvid']}）")
+            spec = resolve_input(hit["bvid"])
     try:
         info = client.get_video_info(bvid=spec.bvid, aid=spec.aid)
         try:
@@ -440,12 +490,15 @@ def main(argv=None):
     s = sub.add_parser("search", help="搜索视频候选")
     s.add_argument("keyword"); s.add_argument("--limit", type=int, default=5)
     s.set_defaults(func=cmd_search)
+    fv = sub.add_parser("favs", help="列出账号收藏夹")
+    fv.set_defaults(func=cmd_favs)
     run = sub.add_parser("run", help="获取视频内容（字幕/转写）并落盘")
-    run.add_argument("input")
+    run.add_argument("input", nargs="?", default=None, help="视频链接/BV/av/名称（--fav 模式可省略）")
     g = run.add_mutually_exclusive_group()
     g.add_argument("--page", type=int, default=None, help="单分P页码（默认 1；与 --pages/--all 互斥）")
     g.add_argument("--pages", default=None, help='批量分P范围，如 "1-10" 或 "1,3,5-8"')
     g.add_argument("--all", dest="all_", action="store_true", help="批量处理全部分P")
+    run.add_argument("--fav", default=None, help='从收藏夹选视频（收藏夹id或名称，配合 --pick 选第N个）')
     run.add_argument("--resume", action="store_true", help="跳过已成功处理的P（断点续跑）")
     run.add_argument("--lang", default=None, help='字幕语言（zh/ja/en等，默认自动中文优先）')
     run.add_argument("--model", default=None, help="whisper 模型（tiny/small/medium/large-v3，默认 config.whisper_model）")
