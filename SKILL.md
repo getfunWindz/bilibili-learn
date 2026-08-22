@@ -67,6 +67,17 @@ python scripts/bili.py run <输入> [--page N] --out <临时工作目录>
 **R10 交付命名（v3.1）**：最终报告文件名必须与视频标题相关：
 `<视频标题>_学习报告.md`（标题过长时截断保留关键部分），避免拷贝到其他设备时混淆。
 
+**R11 名词注释（v3.3，书籍式脚注）**：每个知识点末尾必须附「**名词注释**」小节，
+对知识点中出现的、前置未提及的专业名词逐条注释（名词 + 一句话解释）。
+- 注释形式：写在该知识点末尾（不写文末），格式：
+  `**名词注释**：
+  - teacher forcing：训练时用真实标签而非模型自身输出作为下一步输入`
+- 术语来源优先级：① 先查 `references/glossary.json` 术语库，命中直接引用已有解释（保证跨报告一致）；
+  ② 未命中则新写解释，并用 `python scripts/glossary.py add` 自动沉淀入库
+- 机械校验：报告完成后运行 `python scripts/glossary.py check <报告.md> <subtitle.txt>`，
+  输出「字幕中出现但报告未注释的术语」清单，必须处理到 0 遗漏方可交付
+- 知识点末尾已有的「延伸/彩蛋」字段顺序：定义 → 通俗 → 细节 → 例子 → 延伸 → 彩蛋 → 名词注释
+
 ### 4. 交付
 保存为 `C:\data\BaiduSyncdisk\bilibili学习笔记\<UP主>\YYYY-MM-DD_<标题>\<标题>_学习报告.md`（R10：文件名含视频标题，按 UP 主归档），并向用户汇报报告摘要。
 
@@ -82,6 +93,26 @@ python scripts/bili.py run <输入> [--page N] --out <临时工作目录>
 - **多语言字幕（C1）**：`--lang ja/en` 选择指定语言字幕（默认自动中文优先）
 - **视频信息增强（C3）**：报告元信息含简介/播放/点赞/收藏
 - **运行日志（v2.1）**：每次运行记录到 scripts/logs/bili.log
+- **字幕/转写缓存（v3.3）**：按 (bvid, cid) 缓存到 scripts/cache/，重复处理直接复用（`--no-cache` 强制重取）
+- **请求限流（v3.3）**：批量分P间默认间隔 1.5s（`--interval` 调整），防接口限流导致无谓 Whisper 兜底
+
+### 5.1 环境自检与运维（v3.3）
+- `bili doctor`：一条命令诊断 cookie/GPU(cuBLAS·cuDNN)/faster-whisper 版本兼容/模型缓存/输出目录，
+  缺失时直接给出修复命令（如 `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`）
+- `bili merge <src合集> <dst合集>`：合并跨天/重复生成的合集目录（复制缺失 P，不覆盖已有）
+- GPU 自动注入：transcriber 启动时自动探测 site-packages 下 nvidia DLL 并注入 PATH，免手动配置
+
+### 5.2 收藏夹批处理（v3.3，D1）
+- `bili favs-scan <收藏夹id/名称> [--filter 关键词列表] [--priority] [--snapshot]`：
+  拉取收藏夹全部视频（自动分页）+ 元信息（播放/UP主）→ 主题过滤（默认内置 AI 关键词）→
+  播放量优先级排序（建议处理顺序）→ 失效/不可见视频统计 → 可选快照 JSON（供增量对比）
+
+### 5.3 名词注释与质量校验（v3.3，R11 配套）
+- `python scripts/glossary.py list | add <术语> <解释> | check <报告.md> <subtitle.txt>`
+- 术语库 `references/glossary.json`：agent 写报告时自动沉淀新术语（已有术语不覆盖）
+- check 输出两类问题：注释缺失（正文提及未注释）与覆盖遗漏（字幕出现报告未提及），
+  交付前必须处理到无遗漏
+- 字幕内容级校验（B1）：接口字幕在歌词/标题关键词零命中/行密度异常时自动降级 Whisper
 
 ### 6. 相关性分析与报告组织（agent 核心工作）
 读取汇总 video_info.json 与各 P 字幕，先做**相关性聚类**：
