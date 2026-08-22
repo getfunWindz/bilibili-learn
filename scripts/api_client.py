@@ -137,9 +137,9 @@ class ApiClient:
         return (data.get("subtitle") or {}).get("subtitles") or []
 
     def get_subtitle_text(self, bvid: str, cid: int, duration: int = None, attempts: int = 2,
-                          lang: str = None) -> list:
+                          lang: str = None, title: str = "", desc: str = "") -> list:
         """下载字幕全文。接口不稳定（降级/内容错乱）时：
-        连续两次内容一致 + 时长覆盖率达标才可信；否则返回 []，由上层降级 Whisper。
+        连续两次内容一致 + 时长覆盖达标 + 内容级校验（B1）才可信；否则返回 []，由上层降级 Whisper。
         lang: 指定字幕语言（zh/ja/en 等），None 时自动（中文优先）"""
         first = None
         for i in range(max(2, attempts)):
@@ -147,6 +147,9 @@ class ApiClient:
             if not self._subtitle_complete(lines, duration):
                 time.sleep(2)
                 continue
+            if not self._subtitle_plausible(lines, title, desc, duration)[0]:
+                # B1：内容错乱（歌词/影视剧/标题无关）→ 不可信，降级 Whisper
+                return []
             if first is None:
                 first = lines
                 time.sleep(2)
@@ -169,6 +172,42 @@ class ApiClient:
         return True
 
     @staticmethod
+    def _subtitle_plausible(lines: list, title: str = "", desc: str = "",
+                            duration: int = None) -> tuple:
+        """B1 内容级校验：检测「结构完整但内容错乱」的字幕（本次事故：靶场/影视剧/歌词）。
+        返回 (plausible, reason)；plausible=False 表示应降级 Whisper。
+        信号：① 歌词特征（♪） ② 标题关键词在字幕中完全未出现 ③ 行密度异常"""
+        if not lines:
+            return False, "空字幕"
+        text = " ".join(l.content for l in lines)
+        # ① 歌词特征
+        if "♪" in text:
+            return False, "歌词特征(♪)"
+        # ② 标题关键词重叠：标题提取出的关键词（中文 2-gram + 英文词）
+        #    在字幕中完全零命中 → 内容与标题无关（Whisper 音译变体如 kb cash 也能被中文 2-gram 兜住）
+        kws = ApiClient._extract_keywords(title)
+        if len(kws) >= 2:
+            hits = sum(1 for k in kws if k.lower() in text.lower())
+            if hits == 0:
+                return False, f"标题关键词零命中({len(kws)}词)"
+        # ③ 行密度异常（正常讲解约 0.3~1.0 行/秒；错乱整段字幕常 > 2 行/秒）
+        if duration and duration > 0:
+            density = len(lines) / duration
+            if density > 2.0:
+                return False, f"行密度异常({density:.1f}行/秒)"
+        return True, ""
+
+    @staticmethod
+    def _extract_keywords(text: str) -> list:
+        """提取标题关键词：中文滑窗 2-gram（防贪婪整串）+ ≥3 字母英文词（排除纯数字/符号）"""
+        kws = []
+        for zh in re.findall(r"[\u4e00-\u9fff]{2,}", text):
+            for i in range(len(zh) - 1):
+                kws.append(zh[i:i + 2])
+        kws += [w for w in re.findall(r"[a-zA-Z]{3,}", text) if w.lower() not in {"the", "and"}]
+        return kws
+
+    @staticmethod
     def _pick_subtitle(subs: list, lang: str = None) -> dict:
         """选择字幕：指定 lang 优先（如 ai-ja / ja-JP）；未指定时中文优先，其次任意"""
         if lang:
@@ -189,7 +228,9 @@ class ApiClient:
         if not subs:
             return []
         chosen = self._pick_subtitle(subs, lang)
-        url = chosen["subtitle_url"]
+        url = chosen.get("subtitle_url") or ""
+        if not url:
+            return []  # 接口偶发返回空 url → 视为无字幕，由上层降级 Whisper
         if url.startswith("//"):
             url = "https:" + url
         elif url.startswith("/"):

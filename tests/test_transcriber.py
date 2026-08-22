@@ -31,7 +31,7 @@ def test_transcribe_gpu_failure_falls_back_cpu(monkeypatch):
     class FakeModel:
         def __init__(self, model_size, device, compute_type):
             calls.append((device, compute_type))
-        def transcribe(self, audio_path, language="zh", vad_filter=False, progress_callback=None):
+        def transcribe(self, audio_path, language="zh", vad_filter=False, log_progress=None, progress_callback=None):
             if calls[-1][0] == "cuda":
                 raise RuntimeError("Library cublas64_12.dll is not found")
             class S: pass
@@ -47,7 +47,7 @@ def test_transcribe_progress_callback(monkeypatch):
     seen = []
     class FakeModel:
         def __init__(self, *a, **k): pass
-        def transcribe(self, audio_path, language="zh", vad_filter=False, progress_callback=None):
+        def transcribe(self, audio_path, language="zh", vad_filter=False, log_progress=None, progress_callback=None):
             if progress_callback:
                 progress_callback(10, 100)
                 progress_callback(100, 100)
@@ -69,7 +69,7 @@ def test_transcribe_applies_clean(monkeypatch):
     """转写输出经过 clean_text 清洗"""
     class FakeModel:
         def __init__(self, *a, **k): pass
-        def transcribe(self, audio_path, language="zh", vad_filter=False, progress_callback=None):
+        def transcribe(self, audio_path, language="zh", vad_filter=False, log_progress=None, progress_callback=None):
             class S: pass
             s = S(); s.start, s.end, s.text = 0.0, 1.0, "啊啊啊  大家好"
             return [s], None
@@ -82,7 +82,7 @@ def test_transcribe_vad_fallback(monkeypatch):
     calls = []
     class FakeModel:
         def __init__(self, *a, **k): pass
-        def transcribe(self, audio_path, language="zh", vad_filter=False, progress_callback=None):
+        def transcribe(self, audio_path, language="zh", vad_filter=False, log_progress=None, progress_callback=None):
             calls.append(vad_filter)
             if vad_filter:
                 return [], None
