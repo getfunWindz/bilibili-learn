@@ -19,7 +19,7 @@ class FakeClient:
         assert bvid or aid
         from api_client import VideoInfo
         return VideoInfo(VIEW["data"])
-    def get_subtitle_text(self, bvid, cid, duration=None, lang=None):
+    def get_subtitle_text(self, bvid, cid, duration=None, lang=None, title="", desc=""):
         if self.lines is None:
             return []
         from api_client import SubtitleLine
@@ -49,7 +49,7 @@ def test_run_with_subtitle(tmp_path):
     sub = open(os.path.join(rd, "subtitle.txt"), encoding="utf-8").read()
     assert "大家好" in sub
     tpl = open(os.path.join(rd, "report_template.md"), encoding="utf-8").read()
-    assert "## 分节详解" in tpl and "测试视频" in tpl
+    assert "## 知识详解" in tpl and "测试视频" in tpl
     assert "## 原话摘录" in tpl  # 学习报告要求：附上有参考价值的视频原话
 
 def test_run_no_subtitle_no_whisper_flag(tmp_path):
@@ -104,7 +104,7 @@ class MultiPageClient:
     def get_video_info(self, bvid="", aid=0):
         from api_client import VideoInfo
         return VideoInfo(self.view["data"])
-    def get_subtitle_text(self, bvid, cid, duration=None, lang=None):
+    def get_subtitle_text(self, bvid, cid, duration=None, lang=None, title="", desc=""):
         from api_client import SubtitleLine
         raw = self.lines_map.get(cid)
         if raw is None:
@@ -201,9 +201,9 @@ def test_resume_skips_done_pages(tmp_path):
         1003: _mk_lines([f"第三课{i}" for i in range(12)]),
     })
     orig = bili._process_page
-    def spy(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None):
+    def spy(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None, no_cache=False):
         processed.append(page_)
-        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size)
+        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache)
     bili._process_page = spy
     try:
         bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=None, pages=None,
@@ -289,7 +289,7 @@ def test_batch_writes_progress_incrementally(tmp_path):
     })
     orig = bili._process_page
     calls = {"n": 0}
-    def boom(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None):
+    def boom(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None, no_cache=False):
         calls["n"] += 1
         if calls["n"] == 2:
             raise KeyboardInterrupt()  # 模拟中断
