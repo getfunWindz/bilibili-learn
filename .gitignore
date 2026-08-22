@@ -4,3 +4,6 @@ __pycache__/
 .bili_cookie
 config.json
 logs/
+scripts/cache/
+scripts_backup/
+*.tmp
