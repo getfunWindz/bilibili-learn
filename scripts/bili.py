@@ -104,6 +104,14 @@ def render_template(info: dict) -> str:
 - **延伸**：相关概念的深入拓展（主流/高级知识点 2~4 条，每条 = 概念 + 使用场景/一句话解释，
   如：列表→切片/列表推导式/排序 sort；字典→视图对象/合并 update/JSON 序列化；
   函数→默认参数/lambda/装饰器；类→继承/多态/魔术方法；简单知识点 1 条或省略）
+- **名词注释（R11，必填）**：本知识点中出现的、前置未提及的专业名词逐条注释，
+  先查 references/glossary.json 术语库（命中直接引用），未命中新写并自动沉淀入库；格式：
+  ```
+  **名词注释**：
+  - teacher forcing：训练时用真实标签而非模型自身输出作为下一步输入
+  - KV Cache：键值缓存，推理时缓存注意力 K/V 矩阵避免重复计算
+  ```
+  交付前运行 `python scripts/glossary.py check <报告.md> <subtitle.txt>` 校验到无遗漏
 
 #### 知识点2：...
 （该时间段内原作者讲到的每个知识点都必须列出，不省略）
@@ -205,13 +213,28 @@ def _select_pages(args, info) -> list:
 
 
 def _process_page(client, info, page, out_root, no_whisper, single=False, lang=None,
-                  model_size=None):
+                  model_size=None, no_cache=False):
     """处理单个 P：取字幕/whisper → 落盘。返回 (status, subtitle_source, line_count, out_dir, error)"""
     page_obj = info.page_by_index(page)
+    # C3：命中缓存直接复用（避免重复下载/转写）
+    if not no_cache:
+        import subcache
+        cached = subcache.get_cached(info.bvid, page_obj.cid)
+        if cached:
+            lines = [{"start": l["start"], "end": l["end"], "text": l["text"]} for l in cached]
+            if single:
+                out_dir = os.path.join(out_root, _safe_name(info.owner),
+                                       f"{datetime.now():%Y-%m-%d}_{_safe_name(info.title)}"
+                                       + (f"_P{page}" if info.page_count > 1 else ""))
+                _write_outputs(out_dir, info, page, lines, "cache")
+            else:
+                out_dir = os.path.join(out_root, f"P{page:02d}")
+                _write_outputs(out_dir, info, page, lines, "cache")
+            return "ok", "cache", len(lines), out_dir, ""
     try:
         lines = [{"start": l.start, "end": l.end, "text": l.content}
-                 for l in client.get_subtitle_text(info.bvid, page_obj.cid, duration=info.duration,
-                                                   lang=lang)]
+                 for l in client.get_subtitle_text(info.bvid, page_obj.cid, duration=page_obj.duration,
+                                                   lang=lang, title=info.title, desc=info.desc)]
     except Exception as e:
         err = str(e)[:100]
         print(f"  P{page} 字幕获取失败：{err}", file=sys.stderr)
@@ -246,6 +269,10 @@ def _process_page(client, info, page, out_root, no_whisper, single=False, lang=N
     else:
         out_dir = os.path.join(out_root, f"P{page:02d}")  # out_root 已含 UP主+合集层
     _write_outputs(out_dir, info, page, lines, src)
+    # C3：成功后写缓存（下次命中直接复用）
+    if not no_cache:
+        import subcache
+        subcache.set_cached(info.bvid, page_obj.cid, lines)
     return "ok", src, len(lines), out_dir, ""
 
 
@@ -273,8 +300,11 @@ def _run_batch(client, info, pages, args, out_root):
         t0 = time.time()
         status, src, n, _, err = _process_page(client, info, page, base, args.no_whisper,
                                                lang=getattr(args, "lang", None),
-                                               model_size=getattr(args, "model", None))
+                                               model_size=getattr(args, "model", None),
+                                               no_cache=getattr(args, "no_cache", False))
         elapsed = time.time() - t0
+        if i < len(pages):
+            time.sleep(getattr(args, "interval", 1.5))  # D3：请求间隔限流
         elapsed_list.append(elapsed)
         avg = sum(elapsed_list) / len(elapsed_list)
         remain_min = avg * (len(pages) - i) / 60
@@ -461,7 +491,8 @@ def cmd_run(args, client: ApiClient = None):
             status, src, n, out_dir, err = _process_page(client, info, pages[0], os.path.abspath(out_root),
                                                          args.no_whisper, single=True,
                                                          lang=getattr(args, "lang", None),
-                                                         model_size=getattr(args, "model", None))
+                                                         model_size=getattr(args, "model", None),
+                                                         no_cache=getattr(args, "no_cache", False))
             if status != "ok":
                 msgs = {"no_subtitle": "该视频无字幕（--no-whisper 已跳过转写）",
                         "failed": "获取失败",
@@ -492,6 +523,21 @@ def main(argv=None):
     s.set_defaults(func=cmd_search)
     fv = sub.add_parser("favs", help="列出账号收藏夹")
     fv.set_defaults(func=cmd_favs)
+    fs = sub.add_parser("favs-scan", help="扫描收藏夹：拉全量+主题过滤+优先级排序+快照")
+    fs.add_argument("fav", help="收藏夹 id 或名称")
+    fs.add_argument("--filter", default=None, help="关键词列表（逗号分隔，默认内置 AI 关键词）")
+    fs.add_argument("--priority", action="store_true", help="按播放量降序输出建议处理顺序")
+    fs.add_argument("--out", default=None, help="快照输出目录")
+    fs.add_argument("--snapshot", action="store_true", help="保存快照 JSON（供增量对比）")
+    fs.set_defaults(func=lambda a: _cmd_favs_scan(a))
+    def _cmd_favs_scan(args):
+        import favs
+        return favs.cmd_favs_scan(args)
+    def _cmd_doctor(args):
+        import doctor
+        return doctor.main()
+    doc = sub.add_parser("doctor", help="环境自检（cookie/GPU/whisper/模型缓存）")
+    doc.set_defaults(func=_cmd_doctor)
     run = sub.add_parser("run", help="获取视频内容（字幕/转写）并落盘")
     run.add_argument("input", nargs="?", default=None, help="视频链接/BV/av/名称（--fav 模式可省略）")
     g = run.add_mutually_exclusive_group()
@@ -504,8 +550,17 @@ def main(argv=None):
     run.add_argument("--model", default=None, help="whisper 模型（tiny/small/medium/large-v3，默认 config.whisper_model）")
     run.add_argument("--out", default=None, help="输出根目录（默认 config.out_dir 或 output）")
     run.add_argument("--no-whisper", action="store_true", help="无字幕时不转写直接失败")
+    run.add_argument("--no-cache", dest="no_cache", action="store_true", help="不使用字幕/转写缓存（重新获取）")
+    run.add_argument("--interval", type=float, default=1.5, help="批量分P之间的请求间隔秒数（默认 1.5，防接口限流）")
     run.add_argument("--pick", type=int, default=1, help="名称搜索时选第 N 个候选")
     run.set_defaults(func=cmd_run)
+    def _cmd_merge(args):
+        import mergeutil
+        return mergeutil.cmd_merge(args)
+    mg = sub.add_parser("merge", help="合并两个合集目录（复制缺失的 P 子目录，不覆盖已有）")
+    mg.add_argument("src", help="源合集目录")
+    mg.add_argument("dst", help="目标合集目录")
+    mg.set_defaults(func=_cmd_merge)
     rep = sub.add_parser("report", help="从已有目录（单P/合集）重新生成报告骨架")
     rep.add_argument("target", help="单P或合集目录")
     rep.set_defaults(func=cmd_report)
