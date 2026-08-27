@@ -36,3 +36,21 @@ def test_apply_hf_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HF_ENDPOINT", "https://custom")
     cfg.apply_hf_env({"hf_endpoint": "https://other", "hf_disable_xet": True})
     assert os.environ.get("HF_ENDPOINT") == "https://custom"
+
+def test_vision_config_defaults(tmp_path, monkeypatch):
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "none.json"))
+    c = cfg.load_config()
+    v = c["vision"]
+    assert v["enabled"] is False
+    assert v["model"] == "gpt-4o-mini"
+    assert v["frame_interval"] == 10 and v["max_frames"] == 24
+
+def test_vision_config_partial_merge(tmp_path, monkeypatch):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"vision": {"enabled": True, "api_key": "sk-x", "model": "qwen-vl-max"}}), encoding="utf-8")
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(p))
+    c = cfg.load_config()
+    v = c["vision"]
+    assert v["enabled"] is True and v["api_key"] == "sk-x"
+    assert v["model"] == "qwen-vl-max"
+    assert v["frame_interval"] == 10  # 缺失字段用默认

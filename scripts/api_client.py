@@ -271,6 +271,15 @@ class ApiClient:
         audios.sort(key=lambda a: a.get("bandwidth", 0), reverse=True)
         return audios[0]["baseUrl"]
 
+    def get_video_url(self, bvid: str, cid: int) -> str:
+        """视频画面流直链（多模态视觉路径用）；取码率最高一路"""
+        data = self._get("/x/player/playurl", {"bvid": bvid, "cid": cid, "fnval": 16})
+        videos = (data.get("dash") or {}).get("video") or []
+        if not videos:
+            raise BiliError(-404, "无法获取视频流（可能需要登录）")
+        videos.sort(key=lambda v: v.get("bandwidth", 0), reverse=True)
+        return videos[0]["baseUrl"]
+
     def check_login(self) -> bool:
         """检测登录态：nav 接口 code=-101 表示 cookie 过期/未登录"""
         try:

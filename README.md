@@ -49,6 +49,7 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 | 🔖 名词注释（v3.3） | 每个知识点末尾附「名词注释」小节（书籍式脚注），术语库 `references/glossary.json` 跨报告复用、自动沉淀 |
 | 📂 收藏夹批处理 | `favs-scan`：拉全量 + 主题过滤 + 播放量优先级排序 + 失效视频统计 + 快照 |
 | 🔧 环境自检 | `bili doctor`：一条命令诊断 cookie/GPU/faster-whisper/模型缓存，缺失时直接给修复命令 |
+| 👁️ 多模态视觉路径 | 无字幕+无人声时可选抽帧交给多模态 API（OpenAI 兼容）转写画面，纯辅助不阻塞原有流程 |
 | 🧠 相关性聚类 | 相关分P合并为总报告（按P分章），无关独立成篇，不一刀切 |
 | 📤 随处可读 | 按 UP 主归档到同步盘，导出 Markdown / DOCX / HTML |
 
@@ -74,6 +75,7 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 | `bili favs` | 列出账号全部收藏夹（需登录 cookie） |
 | `bili run <输入> [--page N \| --pages "1-10" \| --all]` | 获取字幕/转写并落盘；`--resume` 断点续跑；`--lang ja/en` 多语言字幕；`--model medium` 转写模型 |
 | `bili run --fav <收藏夹名\|id> --pick N` | 直接总结收藏夹内第 N 个视频（输入参数可省略） |
+| `bili run <输入> --vision` | 无人声/转写不足时强制走多模态视觉 API 转写画面（需先配置 vision） |
 | `bili report <目录>` | 从已有字幕重新生成报告骨架（改模板后无需重抓） |
 | `bili export <目录> --format html\|docx` | 报告导出 |
 | `bili doctor` | 环境自检：cookie / GPU(cuBLAS·cuDNN) / faster-whisper 版本兼容 / 模型缓存 / 输出目录，缺失时给出修复命令 |
@@ -96,6 +98,25 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 ```
 
 优先级：**CLI 参数 > 环境变量 > config.json > 默认值**。
+
+### 第三条路径：多模态视觉 API（可选）
+
+当视频**无字幕且无人声**（纯画面演示/BGM 视频，Whisper 也转写不出内容）时，可配置自有多模态模型 API，将视频**抽帧后交给多模态模型转写画面内容**，再照常总结：
+
+```json
+"vision": {
+  "enabled": true,
+  "base_url": "https://api.openai.com/v1",  // OpenAI 兼容端点（qwen-vl / gemini 等均可）
+  "api_key": "sk-xxx",                       // 自有多模态模型 key
+  "model": "gpt-4o-mini",
+  "frame_interval": 10,                       // 抽帧间隔（秒）
+  "max_frames": 24
+}
+```
+
+- 启用后，无人声视频会自动询问是否走视觉路线；`--vision` 可强制（跳过询问）
+- **纯辅助路径，绝不阻塞原有流程**：未配置 / 非交互环境 / 用户拒绝 / API 失败时，自动回退原路径并提示
+- 转写结果与字幕同格式（带时间戳），agent 总结规则（R1-R11）完全复用
 
 ## 报告结构
 

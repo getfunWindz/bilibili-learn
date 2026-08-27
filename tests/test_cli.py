@@ -201,9 +201,10 @@ def test_resume_skips_done_pages(tmp_path):
         1003: _mk_lines([f"第三课{i}" for i in range(12)]),
     })
     orig = bili._process_page
-    def spy(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None, no_cache=False):
+    def spy(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None,
+            no_cache=False, force_vision=False):
         processed.append(page_)
-        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache)
+        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache, force_vision)
     bili._process_page = spy
     try:
         bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=None, pages=None,
@@ -289,11 +290,12 @@ def test_batch_writes_progress_incrementally(tmp_path):
     })
     orig = bili._process_page
     calls = {"n": 0}
-    def boom(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None, no_cache=False):
+    def boom(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None,
+             no_cache=False, force_vision=False):
         calls["n"] += 1
         if calls["n"] == 2:
             raise KeyboardInterrupt()  # 模拟中断
-        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size)
+        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache, force_vision)
     bili._process_page = boom
     try:
         with pytest.raises(KeyboardInterrupt):
@@ -370,6 +372,39 @@ def test_invalid_pages_graceful(tmp_path, capsys):
     assert e.value.code == 2
     err = capsys.readouterr().err
     assert "无效" in err and "Traceback" not in err
+
+def test_vision_fallback_parses_timestamps(monkeypatch):
+    """视觉转写文本 [时间戳] 解析为 lines"""
+    import vision as vision_mod
+    import transcriber as tr_mod
+    monkeypatch.setattr(vision_mod, "vision_transcribe",
+                        lambda cfg, p, prompt=None: "[0] 画面A\n[10-12] 画面B")
+    monkeypatch.setattr(tr_mod, "download_audio", lambda url, dest: dest)
+    class FC:
+        def get_video_url(self, b, c): return "http://v"
+    cfg = {"enabled": True, "api_key": "k", "base_url": "http://x", "model": "m",
+           "frame_interval": 10, "max_frames": 24, "prompt": ""}
+    lines = bili._vision_fallback(FC(), "BV1GJ411x7h7", 1001, cfg, no_ask=True)
+    assert lines and lines[0]["text"] == "画面A" and lines[0]["start"] == 0.0
+    assert lines[1]["text"] == "画面B" and lines[1]["start"] == 10.0 and lines[1]["end"] == 12.0
+
+def test_run_vision_path_when_whisper_empty(tmp_path, monkeypatch):
+    """whisper 转写为空 → 视觉路径 → subtitle_source=vision"""
+    import transcriber as tr_mod
+    monkeypatch.setattr(tr_mod, "transcribe_video", lambda *a, **k: [])  # 无人声
+    monkeypatch.setattr(bili, "_vision_fallback",
+                        lambda client, bvid, cid, cfg, no_ask=False:
+                            [{"start": 0.0, "end": 5.0, "text": "画面内容"}])
+    out = tmp_path / "out"
+    client = FakeClient(lines=None)
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None,
+                                    vision=True), client=client)
+    rd = report_dir(out)
+    info = json.load(open(os.path.join(rd, "video_info.json"), encoding="utf-8"))
+    assert info["subtitle_source"] == "vision"
+    sub = open(os.path.join(rd, "subtitle.txt"), encoding="utf-8").read()
+    assert "画面内容" in sub
 
 def test_page_and_pages_mutually_exclusive():
     with pytest.raises(SystemExit):

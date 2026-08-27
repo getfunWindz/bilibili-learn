@@ -150,6 +150,19 @@ def test_audio_url_picks_highest_bandwidth():
     url = make_client(playurl=audios).get_audio_url("BV1GJ411x7h7", 1001)
     assert url == "http://high"
 
+def test_video_url_picks_highest_bandwidth():
+    def handler(path, params):
+        if path == "/x/player/playurl":
+            return {"code": 0, "data": {"dash": {"video": [{"bandwidth": 100, "baseUrl": "http://lowv"}, {"bandwidth": 800, "baseUrl": "http://highv"}]}}}
+        raise AssertionError(path)
+    client = ApiClient(FakeSession(handler))
+    assert client.get_video_url("BV1GJ411x7h7", 1001) == "http://highv"
+
+def test_video_url_missing_raises():
+    client = make_client(playurl=[])
+    with pytest.raises(BiliError):
+        client.get_video_url("BV1GJ411x7h7", 1001)
+
 def test_pick_subtitle_by_lang():
     from api_client import ApiClient as A
     subs = [{"lan": "ai-zh", "lan_doc": "中文"}, {"lan": "ai-ja", "lan_doc": "日本語"}, {"lan": "ai-en", "lan_doc": "English"}]

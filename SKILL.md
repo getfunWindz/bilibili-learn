@@ -13,6 +13,21 @@ description: 将 bilibili 视频总结为中文学习报告。触发词：「总
 ### 0. 配置（config.json，可选）
 首次运行自动生成 `scripts/config.json`：`out_dir`（默认输出目录）/ `whisper_model`（tiny/small/medium）/ `hf_endpoint`（HF 镜像）/ `hf_disable_xet`。CLI 参数优先于配置。
 
+**第三条路径：多模态视觉 API（可选配置）**：
+```json
+"vision": {
+  "enabled": true,
+  "base_url": "https://api.openai.com/v1",   // OpenAI 兼容端点
+  "api_key": "sk-xxx",                        // 用户自有多模态模型 key
+  "model": "gpt-4o-mini",                     // 或 qwen-vl-max / gemini-2.0-flash 等
+  "frame_interval": 10,                        // 抽帧间隔（秒）
+  "max_frames": 24,
+  "prompt": ""                                // 自定义提示词（空用默认）
+}
+```
+触发场景：视频**无字幕 + 无人声**（whisper 转写为空/覆盖不足，如纯画面演示、BGM 视频）→ 询问用户是否走视觉路线 → 下载视频画面流 → 抽帧 → 多模态模型转写画面内容 → 落盘 subtitle.txt（source=vision）→ agent 照常总结。
+命令行：`--vision` 强制走视觉（跳过询问）；未配置时自动跳过并提示。
+
 ### 1. 定位视频
 - 链接 / BV号 / av号：运行 `python scripts/bili.py resolve <输入>` 确认解析无误
 - 名称 / UP主：运行 `python scripts/bili.py search <关键词>` 列出候选，**展示给用户确认**后再进行下一步

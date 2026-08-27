@@ -9,6 +9,15 @@ DEFAULT_CONFIG = {
     "whisper_model": "small",   # whisper 模型大小：tiny/small/medium/large-v3
     "hf_endpoint": "",          # HF 镜像（如 https://hf-mirror.com），空则用官方
     "hf_disable_xet": True,     # 禁用 HF xet 协议（镜像站必需）
+    "vision": {                 # 第三条路径：多模态大模型 API（OpenAI 兼容）
+        "enabled": False,       # 是否启用（启用后无人声视频可询问走视觉转写）
+        "base_url": "",         # OpenAI 兼容端点，如 https://api.openai.com/v1
+        "api_key": "",          # API 密钥（config.json 已被 gitignore，不会泄露）
+        "model": "gpt-4o-mini", # 多模态模型名（如 qwen-vl-max / gemini-2.0-flash）
+        "frame_interval": 10,   # 抽帧间隔（秒）
+        "max_frames": 24,       # 最多帧数（超出均匀抽样）
+        "prompt": ""            # 自定义视觉转写提示词（空则用默认）
+    },
 }
 
 def load_config() -> dict:
@@ -19,6 +28,11 @@ def load_config() -> dict:
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 user = json.load(f)
             cfg.update({k: v for k, v in user.items() if k in DEFAULT_CONFIG})
+            # vision 块：缺失字段用默认补齐
+            if isinstance(cfg.get("vision"), dict):
+                base = dict(DEFAULT_CONFIG["vision"])
+                base.update({k: v for k, v in cfg["vision"].items() if k in base})
+                cfg["vision"] = base
         except Exception:
             pass  # 配置损坏时静默用默认
     return cfg
