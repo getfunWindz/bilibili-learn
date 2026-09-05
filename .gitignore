@@ -13,3 +13,8 @@ tmp_cache/
 push_batches/
 *.tmp
 .obsidian/
+
+# 备份/内部文件（不进公开仓库）
+scripts_backup_20260822/
+PLAN_优化计划_2026-08-22.md
+push_batches/
