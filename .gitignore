@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.bili_cookie
+config.json
+logs/
+scripts/cache/
+scripts_backup/
+remote_tmp/
+tmp_llmwiki/
+tmp_harness/
+tmp_cache/
+push_batches/
+*.tmp
+.obsidian/
