@@ -73,3 +73,51 @@ def test_vision_transcribe(monkeypatch, tmp_path):
                         lambda cfg, frames, prompt=None: "[0] 画面文字内容")
     out = vision.vision_transcribe({"enabled": True}, "x.mp4")
     assert out == "[0] 画面文字内容"
+
+def test_find_content_gaps():
+    """转写空档：相邻行间超过 min_gap 的时间区间"""
+    lines = [{"start": 0, "end": 5, "text": "a"},
+             {"start": 30, "end": 35, "text": "b"},
+             {"start": 40, "end": 45, "text": "c"}]
+    gaps = vision.find_content_gaps(lines, duration=60, min_gap=5.0)
+    assert (5.0, 30.0) in gaps or any(abs(g[0] - 5) < 0.1 and abs(g[1] - 30) < 0.1 for g in gaps)
+    # 末尾到视频结束的空档
+    assert any(abs(g[0] - 45) < 0.1 and abs(g[1] - 60) < 0.1 for g in gaps)
+
+def test_pick_check_intervals_empty_transcript():
+    """转写为空 → 全视频作为复检区间"""
+    intervals = vision.pick_check_intervals([], duration=120)
+    assert intervals == [(0.0, 120.0)]
+
+def test_pick_check_intervals_with_transcript():
+    """转写有内容 → 复检空档区间"""
+    lines = [{"start": 0, "end": 5, "text": "a"}, {"start": 60, "end": 65, "text": "b"}]
+    intervals = vision.pick_check_intervals(lines, duration=70, min_gap=5.0)
+    assert len(intervals) >= 1
+    assert all(s < e for s, e in intervals)
+    assert all(s >= 5.0 for s, _ in intervals[1:])  # 不含转写覆盖区
+
+def test_extract_frames_range(tmp_path):
+    """区间内每秒抽帧"""
+    v = _make_test_video(str(tmp_path / "t.mp4"), seconds=4, fps=10)
+    frames = vision.extract_frames_range(v, start_sec=1, end_sec=4, fps=1, max_frames=30)
+    assert 2 <= len(frames) <= 4  # 1s/2s/3s（每秒 1 帧）
+    assert frames[0][0] >= 1
+
+def test_check_transcript_flow(monkeypatch):
+    """复检流程：抽帧 → 多模态判断遗漏 → 解析补充行；无遗漏则为空"""
+    calls = {"n": 0}
+    def fake_describe(cfg, frames, prompt=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "[8] 白板公式：E=mc²"      # 有遗漏
+        return "无遗漏"                        # 无遗漏
+    monkeypatch.setattr(vision, "extract_frames_range",
+                        lambda *a, **k: [(8, b"jpeg")])
+    monkeypatch.setattr(vision, "describe_video", fake_describe)
+    lines = [{"start": 0, "end": 5, "text": "a"}, {"start": 30, "end": 35, "text": "b"}]
+    result = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=40)
+    assert any("白板公式" in s["text"] for s in result["supplements"])
+    # 无遗漏区间不产生补充
+    result2 = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=40)
+    assert result2["supplements"] == []
