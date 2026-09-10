@@ -43,7 +43,7 @@ def test_vision_config_defaults(tmp_path, monkeypatch):
     v = c["vision"]
     assert v["enabled"] is False
     assert v["model"] == "gpt-4o-mini"
-    assert v["frame_interval"] == 10 and v["max_frames"] == 24
+    assert v["frame_interval"] == 10 and v["max_frames"] == 30 and v["max_rounds"] == 2
 
 def test_vision_config_partial_merge(tmp_path, monkeypatch):
     p = tmp_path / "config.json"

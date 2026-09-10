@@ -15,7 +15,8 @@ DEFAULT_CONFIG = {
         "api_key": "",          # API 密钥（config.json 已被 gitignore，不会泄露）
         "model": "gpt-4o-mini", # 多模态模型名（如 qwen-vl-max / gemini-2.0-flash）
         "frame_interval": 10,   # 抽帧间隔（秒）
-        "max_frames": 24,       # 最多帧数（超出均匀抽样）
+        "max_frames": 30,       # 最多帧数
+        "max_rounds": 2,        # 复检最大轮数（一轮效果不佳可继续多轮）
         "prompt": ""            # 自定义视觉转写提示词（空则用默认）
     },
 }
