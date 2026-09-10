@@ -6,6 +6,7 @@
 """
 import base64
 import io
+import re
 import requests
 
 DEFAULT_PROMPT = (
@@ -13,6 +14,15 @@ DEFAULT_PROMPT = (
     "请按帧顺序详细描述每帧画面内容：画面中的文字、图表、代码、操作步骤、关键信息都要尽量完整转录。"
     "输出格式：每行一条 `[时间戳秒] 描述`。如果多帧内容连续，可合并描述并标注起止时间。"
     "请用中文输出。"
+)
+
+CHECK_PROMPT = (
+    "你在帮一个学习报告工具做「转写资料复检」。"
+    "以下是视频某区间的转写文本（可能不完整），以及该区间每秒抽取的画面帧（标注时间戳）。"
+    "请判断画面中是否有转写文本**未覆盖**的知识材料（如白板公式、PPT 要点、代码、演示步骤、字幕卡）。\n"
+    "输出规则：\n"
+    "- 若有遗漏：逐条输出 `[时间戳秒] 补充内容`（只写遗漏的材料，不重复转写已有内容）\n"
+    "- 若画面只是人物讲话/空镜头/与转写一致的板书：只输出四个字 `无遗漏`"
 )
 
 class VisionError(Exception):
@@ -82,3 +92,80 @@ def vision_transcribe(cfg_vision: dict, video_path: str, prompt: str = None) -> 
     if not frames:
         raise VisionError("视频抽帧失败（无视频流或视频不可解码）")
     return describe_video(cfg_vision, frames, prompt)
+
+
+def find_content_gaps(lines: list, duration: float, min_gap: float = 5.0) -> list:
+    """找转写空档区间 [(start, end)]：相邻行间及末尾超过 min_gap 的空白段"""
+    gaps = []
+    prev_end = 0.0
+    for ln in lines:
+        s = float(ln["start"])
+        if s - prev_end >= min_gap:
+            gaps.append((prev_end, s))
+        prev_end = max(prev_end, float(ln["end"]))
+    if duration and float(duration) - prev_end >= min_gap:
+        gaps.append((prev_end, float(duration)))
+    return gaps
+
+
+def pick_check_intervals(lines: list, duration: float, min_gap: float = 5.0) -> list:
+    """复检区间：转写为空 → 全视频；否则 → 转写空档"""
+    if not lines:
+        return [(0.0, float(duration or 0))]
+    return find_content_gaps(lines, duration, min_gap)
+
+
+def extract_frames_range(video_path: str, start_sec: float, end_sec: float,
+                         fps: int = 1, max_frames: int = 30) -> list:
+    """区间内按 fps 抽帧（默认每秒 1 帧）→ [(timestamp_sec, jpeg_bytes)]"""
+    import av
+    container = av.open(video_path)
+    try:
+        stream = container.streams.video[0]
+        frames = []
+        last_ts = None
+        min_delta = (1.0 / max(1, fps)) - 0.01
+        for frame in container.decode(stream):
+            ts = float(frame.pts * stream.time_base) if frame.pts is not None else start_sec
+            if ts < start_sec - 0.5:
+                continue
+            if ts > end_sec:
+                break
+            if last_ts is not None and ts - last_ts < min_delta:
+                continue
+            img = frame.to_image().convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=70)
+            frames.append((int(ts + 0.5), buf.getvalue()))
+            last_ts = ts
+            if len(frames) >= max_frames:
+                break
+        return frames
+    finally:
+        container.close()
+
+
+def check_transcript(cfg_vision: dict, video_path: str, lines: list, duration: float,
+                     min_gap: float = 5.0, fps: int = 1, max_frames: int = 30) -> dict:
+    """转写资料复检（固定路径）：对复检区间每秒抽帧，交多模态判断材料遗漏。
+    返回 {supplements: [{start,end,text}], raw: str}"""
+    intervals = pick_check_intervals(lines, duration, min_gap)
+    supplements = []
+    raws = []
+    ctx = "\n".join(f"[{int(l['start'])}-{int(l['end'])}] {l['text']}" for l in (lines or [])[:200])
+    for (s, e) in intervals:
+        if e - s < 0.5:
+            continue
+        frames = extract_frames_range(video_path, s, e, fps=fps, max_frames=max_frames)
+        if not frames:
+            continue
+        prompt = CHECK_PROMPT + (f"\n\n【已有转写文本（供对照，勿重复）】\n{ctx}" if ctx else "")
+        text = describe_video(cfg_vision, frames, prompt=prompt)
+        raws.append(text)
+        if "无遗漏" in text:
+            continue
+        for m in re.finditer(r"\[(\d+)(?:[-~](\d+))?\]\s*(.+)", text):
+            st = int(m.group(1))
+            en = int(m.group(2)) if m.group(2) else st + 1
+            supplements.append({"start": float(st), "end": float(en), "text": m.group(3).strip()})
+    return {"supplements": supplements, "raw": "\n".join(raws)}

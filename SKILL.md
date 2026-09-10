@@ -8,27 +8,26 @@ description: 将 bilibili 视频总结为中文学习报告。触发词：「总
 ## 职责
 定位用户指定的 bilibili 视频 → 提取内容（字幕优先，Whisper 兜底）→ 撰写**中文详解学习报告** → 保存到百度同步盘。
 
-> **路由**：若用户意图是「把视频加进知识库 / 入库 / 消化进 wiki」→ 改用 `bilibili-to-wiki` skill；本 skill 只处理「总结 / 学习报告」意图。
-
 ## 工作流
 
 ### 0. 配置（config.json，可选）
 首次运行自动生成 `scripts/config.json`：`out_dir`（默认输出目录）/ `whisper_model`（tiny/small/medium）/ `hf_endpoint`（HF 镜像）/ `hf_disable_xet`。CLI 参数优先于配置。
 
-**第三条路径：多模态视觉 API（可选配置）**：
+**第三条路径：多模态复检（可选配置，固定流程）**：
 ```json
 "vision": {
   "enabled": true,
   "base_url": "https://api.openai.com/v1",   // OpenAI 兼容端点
   "api_key": "sk-xxx",                        // 用户自有多模态模型 key
   "model": "gpt-4o-mini",                     // 或 qwen-vl-max / gemini-2.0-flash 等
-  "frame_interval": 10,                        // 抽帧间隔（秒）
-  "max_frames": 24,
-  "prompt": ""                                // 自定义提示词（空用默认）
+  "max_frames": 30
 }
 ```
-触发场景：视频**无字幕 + 无人声**（whisper 转写为空/覆盖不足，如纯画面演示、BGM 视频）→ 询问用户是否走视觉路线 → 下载视频画面流 → 抽帧 → 多模态模型转写画面内容 → 落盘 subtitle.txt（source=vision）→ agent 照常总结。
-命令行：`--vision` 强制走视觉（跳过询问）；未配置时自动跳过并提示。
+**工作链条（配置后固定执行）**：① 字幕路径（四道防线）→ ② 无字幕则 Whisper → ③ **对得到的转写资料复检**：
+转写为空时全视频抽帧、有转写时对空档区间（连续 >5s 无字幕）每秒抽帧，交多模态模型
+判断是否有材料遗漏（白板公式/PPT 要点/代码/演示步骤）；有遗漏则补充并入 subtitle.txt
+（source 标记 `+vision补充`），无遗漏则直接通过 → ④ 进入报告阶段。
+**可选辅助，绝不阻塞原流程**：未配置/API 失败/--no-vision-check 时自动跳过原流程继续。
 
 ### 1. 定位视频
 - 链接 / BV号 / av号：运行 `python scripts/bili.py resolve <输入>` 确认解析无误
@@ -66,8 +65,7 @@ python scripts/bili.py run <输入> [--page N] --out <临时工作目录>
 **R6 自测**：学习路径与自测 = 按知识点维度的收获总结 + 每 3~5 个知识点一道自测题
 （填空/简答形式，附参考答案位置提示），检验学习者是否真的掌握。
 
-**R7 趣味彩蛋（v3.1）**：每个知识点可选嵌入「彩蛋」——从字幕摘录原作者的趣味性原话
-（幽默比喻/小资讯/小tips），增加学习趣味性；无合适素材时省略，不强凑。
+**R7 趣味彩蛋（默认关闭）**：报告**默认不添加彩蛋**。仅当用户明确要求（幽默点/彩蛋/有趣的点）时，才从字幕摘录原作者趣味原话（幽默比喻/小资讯/小tips）作为「彩蛋」融入对应知识点；用户未提及时一律省略。
 
 **R8 官方+通俗双版本（v3.1）**：每个知识点必须同时给出「定义」（官方/教科书式标准表述）
 与「通俗」（一句话新手视角解释），先官方后通俗。
@@ -93,7 +91,7 @@ python scripts/bili.py run <输入> [--page N] --out <临时工作目录>
   ② 未命中则新写解释，并用 `python scripts/glossary.py add` 自动沉淀入库
 - 机械校验：报告完成后运行 `python scripts/glossary.py check <报告.md> <subtitle.txt>`，
   输出「字幕中出现但报告未注释的术语」清单，必须处理到 0 遗漏方可交付
-- 知识点末尾已有的「延伸/彩蛋」字段顺序：定义 → 通俗 → 细节 → 例子 → 延伸 → 彩蛋 → 名词注释
+- 知识点末尾字段顺序：定义 → 通俗 → 细节 → 例子 → 延伸 → （彩蛋，仅用户要求时） → 名词注释
 
 ### 4. 交付
 保存为 `C:\data\BaiduSyncdisk\bilibili学习笔记\<UP主>\YYYY-MM-DD_<标题>\<标题>_学习报告.md`（R10：文件名含视频标题，按 UP 主归档），并向用户汇报报告摘要。

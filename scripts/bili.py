@@ -100,7 +100,7 @@ def render_template(info: dict) -> str:
 - **通俗**：一句话人话解释（新手视角）
 - **细节**：2~4 条浓缩要点（只留知识本身，删除口播废话/寒暄/重复解释）
 - **例子**：视频中的代码/案例（如有）
-- **彩蛋**：原作者的趣味原话/小资讯/小tips（可选，有则填；增加学习趣味性）
+- **彩蛋**：默认省略（不加）；仅当用户明确要求「幽默点/彩蛋/有趣的点」时，才从字幕摘录趣味原话并添加
 - **延伸**：相关概念的深入拓展（主流/高级知识点 2~4 条，每条 = 概念 + 使用场景/一句话解释，
   如：列表→切片/列表推导式/排序 sort；字典→视图对象/合并 update/JSON 序列化；
   函数→默认参数/lambda/装饰器；类→继承/多态/魔术方法；简单知识点 1 条或省略）
@@ -212,42 +212,30 @@ def _select_pages(args, info) -> list:
     return [args.page if args.page is not None else 1]
 
 
-def _vision_fallback(client, bvid: str, cid: int, cfg_vision: dict, no_ask: bool = False):
-    """多模态视觉转写：下载视频 → 抽帧 → API → [{start,end,text}]；失败返回 None"""
+def _vision_check(client, bvid: str, cid: int, cfg_vision: dict, lines: list, duration: float):
+    """转写资料复检（固定路径）：空档/全区每秒抽帧 → 多模态判断材料遗漏 → 补充行列表。
+    失败返回 None（不阻塞原流程）"""
     import vision
     import transcriber as tr
     if not cfg_vision.get("enabled") or not cfg_vision.get("api_key"):
-        print("多模态视觉 API 未配置（config.json → vision：enabled/api_key/base_url/model）", file=sys.stderr)
         return None
-    if not no_ask:
-        if not sys.stdin.isatty():
-            print("该视频无配音/转写为空；如需视觉转写请加 --vision 重跑（需配置 vision API）", file=sys.stderr)
-            return None
-        ans = input("该视频无配音/转写为空，是否用多模态视觉 API 转写画面内容？[y/N] ").strip().lower()
-        if ans not in ("y", "yes"):
-            print("已跳过视觉转写", file=sys.stderr)
-            return None
-    print("下载视频画面流并抽帧（多模态视觉转写）……", file=sys.stderr)
+    print("复检：下载视频画面流，抽帧核对转写遗漏……", file=sys.stderr)
     import tempfile
     url = client.get_video_url(bvid, cid)
     with tempfile.TemporaryDirectory() as td:
         vp = os.path.join(td, "video.m4s")
         tr.download_audio(url, vp)  # 复用流式下载（任意二进制）
-        text = vision.vision_transcribe(cfg_vision, vp, prompt=cfg_vision.get("prompt") or None)
-    lines = []
-    for m in re.finditer(r"\[(\d+)(?:[-~](\d+))?\]\s*(.+)", text):
-        start = int(m.group(1))
-        end = int(m.group(2)) if m.group(2) else start + 1
-        lines.append({"start": float(start), "end": float(end), "text": m.group(3).strip()})
-    if not lines:
-        print("视觉转写结果无法解析（期望 [时间戳] 描述 格式）", file=sys.stderr)
-        return None
-    print(f"视觉转写完成：{len(lines)} 条画面描述", file=sys.stderr)
-    return lines
+        result = vision.check_transcript(cfg_vision, vp, lines or [], duration)
+    sup = result.get("supplements") or []
+    if sup:
+        print(f"复检：发现 {len(sup)} 条遗漏材料，已补充", file=sys.stderr)
+    else:
+        print("复检：无遗漏", file=sys.stderr)
+    return sup
 
 
 def _process_page(client, info, page, out_root, no_whisper, single=False, lang=None,
-                  model_size=None, no_cache=False, force_vision=False):
+                  model_size=None, no_cache=False, no_vision_check=False):
     """处理单个 P：取字幕/whisper/视觉 → 落盘。返回 (status, subtitle_source, line_count, out_dir, error)"""
     page_obj = info.page_by_index(page)
     # C3：命中缓存直接复用（避免重复下载/转写）
@@ -294,17 +282,17 @@ def _process_page(client, info, page, out_root, no_whisper, single=False, lang=N
             return "whisper_missing", src, 0, "", "未安装 faster-whisper"
         except Exception as e:
             return "failed", src, 0, "", str(e)[:100]
-    if not lines:
-        # 第三条路径：无人声/转写不足 → 多模态视觉转写（询问或 --vision 强制）
-        cfgv = config.load_config().get("vision", {})
-        if force_vision or cfgv.get("enabled"):
-            try:
-                vlines = _vision_fallback(client, info.bvid, page_obj.cid, cfgv,
-                                          no_ask=force_vision)
-                if vlines:
-                    lines, src = vlines, "vision"
-            except Exception as e:
-                print(f"  P{page} 视觉转写失败：{str(e)[:100]}", file=sys.stderr)
+    had_lines = bool(lines)
+    # 复检阶段（固定路径，vision 配置可用时）：对字幕/whisper 转写资料抽帧核对遗漏
+    cfgv = config.load_config().get("vision", {})
+    if not no_vision_check and cfgv.get("enabled"):
+        try:
+            sup = _vision_check(client, info.bvid, page_obj.cid, cfgv, lines or [], info.duration)
+            if sup:
+                lines = sorted((lines or []) + sup, key=lambda x: x["start"])
+                src = (src + "+vision补充") if had_lines else "vision"
+        except Exception as e:
+            print(f"  P{page} 复检失败（不影响原流程）：{str(e)[:100]}", file=sys.stderr)
     if not lines:
         return "failed", src, 0, "", "转写结果为空"
     if single:
@@ -347,7 +335,7 @@ def _run_batch(client, info, pages, args, out_root):
                                                lang=getattr(args, "lang", None),
                                                model_size=getattr(args, "model", None),
                                                no_cache=getattr(args, "no_cache", False),
-                                               force_vision=getattr(args, "vision", False))
+                                               no_vision_check=getattr(args, "no_vision_check", False))
         elapsed = time.time() - t0
         if i < len(pages):
             time.sleep(getattr(args, "interval", 1.5))  # D3：请求间隔限流
@@ -539,7 +527,7 @@ def cmd_run(args, client: ApiClient = None):
                                                          lang=getattr(args, "lang", None),
                                                          model_size=getattr(args, "model", None),
                                                          no_cache=getattr(args, "no_cache", False),
-                                                         force_vision=getattr(args, "vision", False))
+                                                         no_vision_check=getattr(args, "no_vision_check", False))
             if status != "ok":
                 msgs = {"no_subtitle": "该视频无字幕（--no-whisper 已跳过转写）",
                         "failed": "获取失败",
@@ -595,7 +583,7 @@ def main(argv=None):
     run.add_argument("--resume", action="store_true", help="跳过已成功处理的P（断点续跑）")
     run.add_argument("--lang", default=None, help='字幕语言（zh/ja/en等，默认自动中文优先）')
     run.add_argument("--model", default=None, help="whisper 模型（tiny/small/medium/large-v3，默认 config.whisper_model）")
-    run.add_argument("--vision", action="store_true", help="无人声/转写不足时用多模态视觉API转写（不询问）")
+    run.add_argument("--no-vision-check", action="store_true", help="关闭多模态复检（默认开启：配置 vision 后固定执行）")
     run.add_argument("--out", default=None, help="输出根目录（默认 config.out_dir 或 output）")
     run.add_argument("--no-whisper", action="store_true", help="无字幕时不转写直接失败")
     run.add_argument("--no-cache", dest="no_cache", action="store_true", help="不使用字幕/转写缓存（重新获取）")
