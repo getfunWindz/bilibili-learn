@@ -104,20 +104,79 @@ def test_extract_frames_range(tmp_path):
     assert 2 <= len(frames) <= 4  # 1s/2s/3s（每秒 1 帧）
     assert frames[0][0] >= 1
 
+def test_plan_check_intervals(monkeypatch):
+    """模型规划复检区间：识别引导性字眼区域，区间不固定"""
+    def fake_describe(cfg, frames, prompt=None):
+        return "[120-140] 出现“根据这张表”引导语，可能有PPT要点\n[300-318] “看一下这段代码”，可能有代码演示"
+    monkeypatch.setattr(vision, "describe_video", fake_describe)
+    lines = [{"start": 0, "end": 5, "text": "a"}, {"start": 120, "end": 122, "text": "根据这张表"},
+             {"start": 300, "end": 302, "text": "看一下这段代码"}]
+    ranges = vision.plan_check_intervals({"enabled": True}, lines, duration=600, max_ranges=5)
+    assert (120.0, 140.0) in [(s, e) for s, e, _r in ranges]
+    assert (300.0, 318.0) in [(s, e) for s, e, _r in ranges]
+
+def test_check_transcript_model_planned(monkeypatch):
+    """复检使用模型规划的区间（引导性字眼区域），而非机械空档"""
+    monkeypatch.setattr(vision, "plan_check_intervals",
+                        lambda cfg, lines, duration, max_ranges=5, **k:
+                            [(120.0, 140.0, "引导语")])
+    monkeypatch.setattr(vision, "extract_frames_range", lambda *a, **k: [(120, b"jpeg")])
+    monkeypatch.setattr(vision, "describe_video",
+                        lambda cfg, frames, prompt=None: "[125] 白板：注意力公式")
+    lines = [{"start": 120, "end": 122, "text": "根据这张表"}]
+    result = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=600)
+    assert any("注意力公式" in s["text"] for s in result["supplements"])
+
+def test_check_transcript_multi_round(monkeypatch):
+    """多轮复检：一轮效果不佳（有新发现）→ 继续多轮；无新发现则停止"""
+    plan_calls = {"n": 0}
+    def fake_plan(cfg, lines, duration, max_ranges=5, **k):
+        plan_calls["n"] += 1
+        if plan_calls["n"] == 1:
+            return [(10.0, 30.0, "第一轮")]
+        if plan_calls["n"] == 2:
+            return [(50.0, 70.0, "第二轮")]
+        return []
+    monkeypatch.setattr(vision, "plan_check_intervals", fake_plan)
+    monkeypatch.setattr(vision, "extract_frames_range", lambda *a, **k: [(10, b"jpeg")])
+    desc_calls = {"n": 0}
+    def fake_desc(cfg, frames, prompt=None):
+        desc_calls["n"] += 1
+        if desc_calls["n"] == 1:
+            return "[12] 遗漏A"
+        if desc_calls["n"] == 2:
+            return "[55] 遗漏B"
+        return "无遗漏"
+    monkeypatch.setattr(vision, "describe_video", fake_desc)
+    lines = [{"start": 0, "end": 5, "text": "a"}]
+    result = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=100, max_rounds=3)
+    texts = [s["text"] for s in result["supplements"]]
+    assert any("遗漏A" in t for t in texts) and any("遗漏B" in t for t in texts)
+    assert plan_calls["n"] >= 3  # 两轮有产出后仍问了第三轮（返回空才停）
+
+def test_check_transcript_plan_fallback(monkeypatch):
+    """模型规划失败 → 回退机械空档规则（健壮性）"""
+    monkeypatch.setattr(vision, "plan_check_intervals",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("API 失败")))
+    monkeypatch.setattr(vision, "extract_frames_range", lambda *a, **k: [(30, b"jpeg")])
+    monkeypatch.setattr(vision, "describe_video", lambda cfg, frames, prompt=None: "[35] 遗漏C")
+    lines = [{"start": 0, "end": 5, "text": "a"}, {"start": 40, "end": 45, "text": "b"}]
+    result = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=50)
+    assert any("遗漏C" in s["text"] for s in result["supplements"])
+
 def test_check_transcript_flow(monkeypatch):
-    """复检流程：抽帧 → 多模态判断遗漏 → 解析补充行；无遗漏则为空"""
+    """回退路径：模型规划失败 → 机械空档区间复检 → 有遗漏则补充"""
+    monkeypatch.setattr(vision, "plan_check_intervals",
+                        lambda *a, **k: (_ for _ in ()).throw(vision.VisionError("no plan")))
     calls = {"n": 0}
     def fake_describe(cfg, frames, prompt=None):
         calls["n"] += 1
         if calls["n"] == 1:
-            return "[8] 白板公式：E=mc²"      # 有遗漏
-        return "无遗漏"                        # 无遗漏
-    monkeypatch.setattr(vision, "extract_frames_range",
-                        lambda *a, **k: [(8, b"jpeg")])
+            return "[8] 白板公式：E=mc²"
+        return "无遗漏"
+    monkeypatch.setattr(vision, "extract_frames_range", lambda *a, **k: [(8, b"jpeg")])
     monkeypatch.setattr(vision, "describe_video", fake_describe)
     lines = [{"start": 0, "end": 5, "text": "a"}, {"start": 30, "end": 35, "text": "b"}]
     result = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=40)
     assert any("白板公式" in s["text"] for s in result["supplements"])
-    # 无遗漏区间不产生补充
-    result2 = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=40)
-    assert result2["supplements"] == []
+

@@ -225,7 +225,9 @@ def _vision_check(client, bvid: str, cid: int, cfg_vision: dict, lines: list, du
     with tempfile.TemporaryDirectory() as td:
         vp = os.path.join(td, "video.m4s")
         tr.download_audio(url, vp)  # 复用流式下载（任意二进制）
-        result = vision.check_transcript(cfg_vision, vp, lines or [], duration)
+        result = vision.check_transcript(cfg_vision, vp, lines or [], duration,
+                                         max_frames=cfg_vision.get("max_frames", 30),
+                                         max_rounds=cfg_vision.get("max_rounds", 2))
     sup = result.get("supplements") or []
     if sup:
         print(f"复检：发现 {len(sup)} 条遗漏材料，已补充", file=sys.stderr)
