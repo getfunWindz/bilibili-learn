@@ -473,6 +473,34 @@ def _resolve_fav(client: ApiClient, fav: str, pick: int):
     return m["bvid"], m["title"]
 
 
+def cmd_frames(args, client: ApiClient = None):
+    """抽帧保存 JPEG 文件——供多模态 agent 用 read 工具读图执行复检（R12 路径 1）"""
+    import tempfile
+    import vision
+    import transcriber as tr
+    client = client or ApiClient()
+    spec = resolve_input(args.input)
+    info = client.get_video_info(bvid=spec.bvid, aid=spec.aid)
+    page_obj = info.page_by_index(spec.page if spec.page else 1)
+    print(f"下载视频流并抽帧：{info.title[:30]} P{page_obj.page}", file=sys.stderr)
+    url = client.get_video_url(info.bvid, page_obj.cid)
+    with tempfile.TemporaryDirectory() as td:
+        vp = os.path.join(td, "video.m4s")
+        tr.download_audio(url, vp)
+        if getattr(args, "range", None):
+            s, e = (float(x) for x in args.range.split("-"))
+            frames = vision.extract_frames_range(vp, s, e, fps=args.fps, max_frames=args.max)
+        else:
+            frames = vision.extract_frames(vp, interval_sec=10, max_frames=args.max)
+    os.makedirs(args.out, exist_ok=True)
+    for ts, jpeg in frames:
+        with open(os.path.join(args.out, f"frame_{ts}s.jpg"), "wb") as f:
+            f.write(jpeg)
+    print(f"已保存 {len(frames)} 帧 → {args.out}")
+    if not args.range:
+        print("提示：无人声视频建议加 --range \"起-止\" 指定区间、--fps 1 每秒一帧", file=sys.stderr)
+
+
 def cmd_run(args, client: ApiClient = None):
     client = client or ApiClient()
     cfg = config.load_config()
@@ -558,6 +586,13 @@ def main(argv=None):
     s.set_defaults(func=cmd_search)
     fv = sub.add_parser("favs", help="列出账号收藏夹")
     fv.set_defaults(func=cmd_favs)
+    fr = sub.add_parser("frames", help="抽帧保存 JPEG（供多模态 agent 读图复检）")
+    fr.add_argument("input", help="视频链接/BV/av")
+    fr.add_argument("--range", default=None, help='区间 "起-止"（秒），如 "10-60"；缺省全视频每 10s 抽帧')
+    fr.add_argument("--fps", type=int, default=1, help="区间内每秒抽帧数（默认 1）")
+    fr.add_argument("--max", type=int, default=30, help="最大帧数（默认 30）")
+    fr.add_argument("--out", default="frames", help="输出目录")
+    fr.set_defaults(func=cmd_frames)
     fs = sub.add_parser("favs-scan", help="扫描收藏夹：拉全量+主题过滤+优先级排序+快照")
     fs.add_argument("fav", help="收藏夹 id 或名称")
     fs.add_argument("--filter", default=None, help="关键词列表（逗号分隔，默认内置 AI 关键词）")

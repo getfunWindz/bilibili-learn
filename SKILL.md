@@ -29,6 +29,22 @@ description: 将 bilibili 视频总结为中文学习报告。触发词：「总
 （source 标记 `+vision补充`），无遗漏则直接通过 → ④ 进入报告阶段。
 **可选辅助，绝不阻塞原流程**：未配置/API 失败/--no-vision-check 时自动跳过原流程继续。
 
+### 复检执行者选择（R12，agent 必须按此决策）
+
+复检阶段由谁执行，取决于当前 harness 模型能力：
+
+1. **当前模型是多模态模型（可直接读图）** → **agent 自行执行复检**，无需额外 API：
+   - 抽帧：`python scripts/bili.py frames <输入> --range "起-止" --fps 1 --out <目录>`
+   - 用 read 工具逐帧读图（JPEG），对照 subtitle.txt 判断材料遗漏
+     （白板公式 / PPT 要点 / 代码 / 演示步骤 / 字幕卡）
+   - 有遗漏 → 将该时间段画面内容补充进报告对应知识点（标注「画面补充」）；无遗漏 → 通过
+2. **当前模型是纯文本模型（无法读图）** → **询问用户**是否提供多模态模型 API
+   （base_url / api_key / model）写入 `scripts/config.json` 的 `vision` 块；
+   用户提供后，复检由该 API 执行（`bili run` 自动进行）
+3. **用户不需要多模态能力** → **直接跳过复检**，进入报告阶段（不影响主流程）
+
+判断依据：自身是否具备图像理解能力（可直接读图 → 多模态）；不确定时按第 2 条询问用户。
+
 ### 1. 定位视频
 - 链接 / BV号 / av号：运行 `python scripts/bili.py resolve <输入>` 确认解析无误
 - 名称 / UP主：运行 `python scripts/bili.py search <关键词>` 列出候选，**展示给用户确认**后再进行下一步

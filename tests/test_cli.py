@@ -427,6 +427,24 @@ def test_no_vision_check_flag(tmp_path, monkeypatch):
                                     no_vision_check=True), client=client)
     assert called["n"] == 0
 
+def test_frames_command_saves_jpegs(tmp_path, monkeypatch):
+    """frames 命令：抽帧保存 JPEG 文件（供多模态 agent 用 read 工具读图复检）"""
+    import vision as vision_mod
+    import transcriber as tr_mod
+    monkeypatch.setattr(vision_mod, "extract_frames_range",
+                        lambda p, s, e, fps=1, max_frames=30:
+                            [(0, b"\xff\xd8a"), (1, b"\xff\xd8b")])
+    monkeypatch.setattr(tr_mod, "download_audio", lambda url, dest: dest)
+    class FC(FakeClient):
+        def get_video_url(self, b, c): return "http://v"
+    out = tmp_path / "frames"
+    bili.cmd_frames(argparse.Namespace(input="BV1GJ411x7h7", range="0-10",
+                                       out=str(out), fps=1, max=30),
+                    client=FC())
+    files = sorted(os.listdir(out))
+    assert len(files) == 2
+    assert any(f.startswith("frame_0s") for f in files)
+
 def test_page_and_pages_mutually_exclusive():
     with pytest.raises(SystemExit):
         bili.main(["run", "BV1GJ411x7h7", "--page", "2", "--all"])
