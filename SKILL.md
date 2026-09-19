@@ -63,6 +63,21 @@ python scripts/bili.py run <输入> [--page N] --out <临时工作目录>
 - **国内网络首次下载模型**：设置环境变量后运行 `HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 python scripts/bili.py ...`（HF 直连超时；新版 hub 需禁用 xet 协议）
 - 输出 3 个文件：`video_info.json`（元信息）、`subtitle.txt`（字幕全文）、`report_template.md`（报告骨架）
 
+### 2.1 多模态复检工作流（agent 主动执行，Whisper 转写时必做）
+
+转写完成后（尤其是 **Whisper 路径**与字幕覆盖不足时），**agent 必须主动调用自身多模态能力复检材料完整性**：
+
+1. **定位复检区间**：按转写中出现的引导性字眼（「根据」「看一下」「如图」「这张表」「演示一下」等），
+   或按知识点分布挑 1~3 个关键段（每段 10~60 秒）
+2. **抽帧**：`python scripts/bili.py frames <视频> --range "起-止" --fps 1 --out <目录>`
+3. **读图复检**：用 read 工具逐帧读图（JPEG），对照 subtitle.txt 判断画面是否有转写**遗漏的材料**
+   （白板公式 / PPT 要点 / 代码 / 演示步骤 / 图表 / 资料截图）
+4. **补录**：有遗漏 → 补充进报告对应知识点（标注「画面补充」）；无遗漏 → 通过
+5. **无读图能力时**：按 R12 路径 2/3 处理（询问用户配置 vision API / 跳过复检）
+
+**经验证据（必读）**：手撕vLLM【7】RMSNorm 的 Whisper 转写遗漏了画面中的 **RMSNorm 公式、γ/ε 参数说明、LLaMA/Qwen 采用理由**——
+正是通过抽帧读图才补录进报告。**Whisper 转写 + 未复检 = 报告可能缺失关键公式与结论。**
+
 ### 3. 撰写报告（agent 核心工作）
 读取上述 3 个文件，按骨架补全。**以下为硬性规则，必须全部满足**：
 
