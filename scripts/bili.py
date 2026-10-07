@@ -552,8 +552,9 @@ def cmd_frames(args, client: ApiClient = None):
 
 
 def cmd_run(args, client: ApiClient = None):
-    client = client or ApiClient()
     cfg = config.load_config()
+    client = client or ApiClient(max_retries=cfg.get("api_retries", 4),
+                                 retry_base_delay=cfg.get("api_retry_base", 1.5))
     config.apply_hf_env(cfg)
     out_root = args.out if getattr(args, "out", None) else (cfg.get("out_dir") or "output")
     try:

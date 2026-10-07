@@ -238,6 +238,63 @@ def test_video_url_lowest_picks_min_bandwidth():
     assert client.get_video_url("BV1GJ411x7h7", 1001, lowest=True) == "http://lowv"
     assert client.get_video_url("BV1GJ411x7h7", 1001) == "http://highv"
 
+
+# ---------- 限流/风控重试（指数退避 + 412 刷新 cookie） ----------
+
+class RetrySession:
+    """可编排响应序列的 Session；记录调用次数与主页预热次数"""
+    def __init__(self, responses):
+        self.responses, self.calls, self.homepage_calls = list(responses), 0, 0
+        self.headers, self.cookies = {}, FakeCookies()
+    def get(self, path, params=None, timeout=None):
+        if "www.bilibili.com" in path and "api.bilibili" not in path:
+            self.homepage_calls += 1
+            return FakeResponse({"ok": True})
+        self.calls += 1
+        status, payload = self.responses.pop(0)
+        return FakeResponse(payload, status_code=status)
+
+def _no_sleep(monkeypatch):
+    import api_client as ac
+    monkeypatch.setattr(ac.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ac.random, "uniform", lambda a, b: 0.0)
+
+def test_get_retries_on_412_then_succeeds(monkeypatch):
+    _no_sleep(monkeypatch)
+    sess = RetrySession([(412, "风控"), (412, "风控"), (200, {"code": 0, "data": {"ok": 1}})])
+    client = ApiClient(sess, warm=False, max_retries=3, retry_base_delay=0.01)
+    assert client._get("/x/player/v2", {}) == {"ok": 1}
+    assert sess.calls == 3 and sess.homepage_calls >= 1  # 412 后刷新 cookie
+
+def test_get_gives_up_after_retries(monkeypatch):
+    _no_sleep(monkeypatch)
+    sess = RetrySession([(412, "风控")] * 5)
+    client = ApiClient(sess, warm=False, max_retries=4, retry_base_delay=0.01)
+    with pytest.raises(BiliError) as e:
+        client._get("/x/player/v2", {})
+    assert e.value.code == 412 and sess.calls == 5  # 1 次 + 4 重试（D4 决策）
+
+def test_get_business_error_not_retried(monkeypatch):
+    _no_sleep(monkeypatch)
+    sess = RetrySession([(200, {"code": -101, "message": "未登录"})])
+    client = ApiClient(sess, warm=False)
+    with pytest.raises(BiliError):
+        client._get("/x/web-interface/nav", {})
+    assert sess.calls == 1  # 业务错误不重试
+
+def test_get_html_body_retried(monkeypatch):
+    _no_sleep(monkeypatch)
+    sess = RetrySession([(200, "<html>风控</html>"), (200, {"code": 0, "data": {"ok": 2}})])
+    client = ApiClient(sess, warm=False, retry_base_delay=0.01)
+    assert client._get("/x/player/v2", {}) == {"ok": 2}
+    assert sess.calls == 2
+
+def test_config_retry_defaults(tmp_path, monkeypatch):
+    import config as cfg
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "none.json"))
+    c = cfg.load_config()
+    assert c["api_retries"] == 4 and c["api_retry_base"] == 1.5  # D4：默认 4 次
+
 def test_non_json_response_friendly_error():
     client = ApiClient(FakeSession(lambda p, q: "<!DOCTYPE html><html>风控页</html>"))
     with pytest.raises(BiliError) as e:
