@@ -9,6 +9,9 @@ HEADERS = {
     "Referer": "https://www.bilibili.com",
 }
 
+# 限流/风控类可重试 HTTP 状态码（其余 4xx 不重试）
+RETRYABLE_STATUS = frozenset({412, 429, 500, 502, 503, 504})
+
 class BiliError(Exception):
     def __init__(self, code, message):
         super().__init__(f"[{code}] {message}")
@@ -106,10 +109,13 @@ def load_cookie(client) -> bool:
     return True
 
 class ApiClient:
-    def __init__(self, session: requests.Session = None, timeout: int = 15, warm: bool = True):
+    def __init__(self, session: requests.Session = None, timeout: int = 15, warm: bool = True,
+                 max_retries: int = 4, retry_base_delay: float = 1.5):
         self.session = session or requests.Session()
         self.session.headers.update(HEADERS)
         self.timeout = timeout
+        self.max_retries = max(0, int(max_retries))
+        self.retry_base_delay = max(0.0, float(retry_base_delay))
         if warm:
             try:
                 self._warm_cookie()
@@ -120,25 +126,59 @@ class ApiClient:
         except Exception:
             pass
 
-    def _warm_cookie(self) -> None:
-        """访问主页预热 buvid3 cookie（bilibili 对无 cookie 的裸 API 请求返回 412）"""
+    def _warm_cookie(self, force: bool = False) -> None:
+        """访问主页预热 buvid3 cookie（bilibili 对无 cookie 的裸 API 请求返回 412）；force=True 强制重取"""
         cookies = getattr(self.session, "cookies", None)
-        if cookies is not None and cookies.get("buvid3"):
+        if not force and cookies is not None and cookies.get("buvid3"):
             return
-        self.session.get("https://www.bilibili.com", timeout=self.timeout)
-
-    def _get(self, path: str, params: dict) -> dict:
-        resp = self.session.get(path if path.startswith("http") else BASE + path,
-                                params=params, timeout=self.timeout)
-        resp.raise_for_status()
+        params = {"_": int(time.time())} if force else None
         try:
-            data = resp.json()
-        except ValueError as e:
-            raise BiliError(resp.status_code,
-                            f"响应不是 JSON（HTTP {resp.status_code}，可能被风控拦截）") from e
-        if data.get("code") != 0:
-            raise BiliError(data.get("code", -1), data.get("message", "未知错误"))
-        return data["data"]
+            self.session.get("https://www.bilibili.com", params=params, timeout=self.timeout)
+        except Exception:
+            pass  # 预热失败不致命，后续请求仍会尝试
+
+    def _backoff_delay(self, attempt: int) -> float:
+        """指数退避 + 抖动：base * 2^attempt + U(0, 0.4)"""
+        return self.retry_base_delay * (2 ** attempt) + random.uniform(0, 0.4)
+
+    def _get(self, url_or_path: str, params: dict = None, envelope: bool = True):
+        """带限流重试的 GET：仅对 412/429/5xx、超时/连接错误、风控 HTML 重试；
+        业务错误码（code != 0）不重试。envelope=True 时解包 {code,data} 信封。
+        412 风控重试前强制刷新 buvid3 cookie。"""
+        url = url_or_path if url_or_path.startswith("http") else BASE + url_or_path
+        last = None
+        rate_limited = False
+        for attempt in range(self.max_retries + 1):
+            if attempt:
+                time.sleep(self._backoff_delay(attempt - 1))
+                if rate_limited:
+                    self._warm_cookie(force=True)
+            rate_limited = False
+            try:
+                resp = self.session.get(url, params=params, timeout=self.timeout)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last = e
+                continue
+            if resp.status_code in RETRYABLE_STATUS:
+                rate_limited = resp.status_code == 412
+                last = BiliError(resp.status_code, f"HTTP {resp.status_code}（限流/风控）")
+                continue
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except ValueError:
+                last = BiliError(resp.status_code,
+                                 f"响应不是 JSON（HTTP {resp.status_code}，可能被风控拦截）")
+                rate_limited = True  # 风控页 → 重试并刷新 cookie
+                continue
+            if envelope:
+                if data.get("code") != 0:
+                    raise BiliError(data.get("code", -1), data.get("message", "未知错误"))
+                return data["data"]
+            return data
+        if isinstance(last, BiliError):
+            raise last
+        raise BiliError(-1, f"请求失败（已重试 {self.max_retries} 次）：{str(last)[:120]}")
 
     def get_video_info(self, bvid: str = "", aid: int = 0) -> VideoInfo:
         """视频元信息 + 分P列表（批量扩展点：pages 即全部分P）"""
@@ -289,9 +329,7 @@ class ApiClient:
             url = "https:" + url
         elif url.startswith("/"):
             url = BASE + url
-        resp = self.session.get(url, timeout=self.timeout)
-        resp.raise_for_status()
-        payload = resp.json()  # 字幕文件是裸 JSON（无 code/data 信封），不能走 _get
+        payload = self._get(url, envelope=False)  # 字幕文件是裸 JSON（无 code/data 信封）
         return [SubtitleLine(float(l["from"]), float(l["to"]), l["content"])
                 for l in (payload.get("body") or [])]
 

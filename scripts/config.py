@@ -9,6 +9,8 @@ DEFAULT_CONFIG = {
     "whisper_model": "small",   # whisper 模型大小：tiny/small/medium/large-v3
     "hf_endpoint": "",          # HF 镜像（如 https://hf-mirror.com），空则用官方
     "hf_disable_xet": True,     # 禁用 HF xet 协议（镜像站必需）
+    "api_retries": 4,           # 接口限流/风控重试次数（指数退避；D4 决策：默认 4 次）
+    "api_retry_base": 1.5,      # 退避基数（秒）
     "vision": {                 # 第三条路径：多模态大模型 API（OpenAI 兼容）
         "enabled": False,       # 是否启用（启用后无人声视频可询问走视觉转写）
         "base_url": "",         # OpenAI 兼容端点，如 https://api.openai.com/v1
