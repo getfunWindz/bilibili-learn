@@ -180,3 +180,56 @@ def test_check_transcript_flow(monkeypatch):
     result = vision.check_transcript({"enabled": True}, "x.mp4", lines, duration=40)
     assert any("白板公式" in s["text"] for s in result["supplements"])
 
+
+# ---------- 字幕归属复检（3 帧：开头/中间/结尾） ----------
+
+def test_pick_edge_timestamps():
+    lines = [{"start": 10, "end": 12, "text": "a"}, {"start": 90, "end": 98, "text": "b"}]
+    tss = vision.pick_edge_timestamps(lines, duration=100)
+    assert len(tss) == 3
+    assert tss[0] == 10.5 and tss[1] == 54.0 and 97 <= tss[2] <= 100
+
+
+def test_pick_edge_timestamps_short_clip():
+    lines = [{"start": 0, "end": 1.5, "text": "a"}]
+    tss = vision.pick_edge_timestamps(lines, duration=2)
+    assert tss and all(0 <= t <= 2 for t in tss)
+
+
+def test_extract_frames_at(tmp_path):
+    """定点抽帧（seek 优化）：3 个时间点至少取到 2 帧"""
+    v = _make_test_video(str(tmp_path / "t.mp4"), seconds=4, fps=10)
+    frames = vision.extract_frames_at(v, [0.5, 2.0, 3.5])
+    assert len(frames) >= 2
+    for ts, jpeg in frames:
+        assert jpeg[:2] == b"\xff\xd8"  # JPEG 头
+
+
+def test_parse_match_verdict():
+    assert vision.parse_match_verdict("一致") is True
+    assert vision.parse_match_verdict("不一致：这是影视剧台词") is False
+    assert vision.parse_match_verdict("无法判断") is False   # 未知输出 → 保守
+
+
+def test_check_subtitle_match(monkeypatch):
+    """归属复检通过：字幕片段进入提示词，返回 True"""
+    monkeypatch.setattr(vision, "extract_frames_at",
+                        lambda p, tss: [(0, b"j"), (50, b"j"), (99, b"j")])
+    captured = {}
+    def fake_desc(cfg, frames, prompt=None):
+        captured["prompt"] = prompt
+        return "一致"
+    monkeypatch.setattr(vision, "describe_video", fake_desc)
+    lines = [{"start": i * 10, "end": i * 10 + 8, "text": f"第{i}句 KV Cache 讲解"} for i in range(10)]
+    assert vision.check_subtitle_match({"enabled": True}, "x.mp4", lines, duration=100) is True
+    assert "KV Cache" in captured["prompt"]
+
+
+def test_check_subtitle_match_mismatch(monkeypatch):
+    """归属复检不一致（错乱字幕场景）→ 返回 False"""
+    monkeypatch.setattr(vision, "extract_frames_at", lambda p, tss: [(0, b"j")])
+    monkeypatch.setattr(vision, "describe_video",
+                        lambda cfg, frames, prompt=None: "不一致：内容为影视剧台词")
+    lines = [{"start": 0, "end": 8, "text": "你还是人吗我的好夫人"} for _ in range(10)]
+    assert vision.check_subtitle_match({"enabled": True}, "x.mp4", lines, duration=100) is False
+

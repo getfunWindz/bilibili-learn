@@ -37,6 +37,15 @@ PLAN_PROMPT = (
     "若确实没有值得复检的区间，输出：`无区间`"
 )
 
+MATCH_PROMPT = (
+    "你是学习报告工具的「字幕归属校验」助手。以下是同一个视频在开头/中间/结尾三个时间点的画面帧，"
+    "以及待校验字幕在开头/中间/结尾的片段。\n"
+    "请判断这些字幕是否属于这个视频：\n"
+    "- 主题/领域是否一致（画面中的板书、PPT 标题、演示内容与字幕是否相关）\n"
+    "- 字幕是否明显来自其他视频（如影视剧台词、歌词、其他领域的教程、完全无关的口播）\n"
+    "只输出一行结论：`一致` 或 `不一致：简短理由`。不要输出其他内容。"
+)
+
 class VisionError(Exception):
     """多模态 API 相关错误"""
 
@@ -225,3 +234,94 @@ def check_transcript(cfg_vision: dict, video_path: str, lines: list, duration: f
         if not got_new:
             break  # 本轮无新发现 → 结束（一次效果不佳时已通过多轮继续）
     return {"supplements": supplements, "raw": "\n".join(raws)}
+
+
+def pick_edge_timestamps(lines: list, duration: float = None) -> list:
+    """按字幕时间轴取开头/中间/结尾三个抽查点（秒，去重）"""
+    if not lines:
+        if duration:
+            return [1.0, float(duration) / 2, max(1.0, float(duration) - 1.0)]
+        return [0.0]
+    s0 = max(0.0, float(lines[0]["start"]))
+    e_last = float(lines[-1]["end"])
+    if duration:
+        e_last = min(e_last, float(duration))
+    if e_last - s0 >= 3.0:
+        pts = [s0 + 0.5, (s0 + e_last) / 2, max(s0 + 0.5, e_last - 1.0)]
+    else:
+        pts = [s0 + 0.5, (s0 + e_last) / 2, max(s0 + 0.5, e_last - 0.5)]
+    out = []
+    for p in pts:
+        p = round(max(0.0, p), 2)
+        if not out or abs(p - out[-1]) > 0.5:
+            out.append(p)
+    return out
+
+
+def extract_frames_at(video_path: str, timestamps: list) -> list:
+    """对指定时间点各取最近一帧（seek 优化，长视频无需从头解码）→ [(秒, jpeg)]"""
+    import av
+    out = []
+    for ts in sorted(set(round(float(t), 2) for t in timestamps)):
+        container = av.open(video_path)
+        try:
+            stream = container.streams.video[0]
+            tbase = float(stream.time_base)
+            try:
+                container.seek(int(ts / tbase), stream=stream, backward=True)
+            except Exception:
+                try:
+                    container.seek(0)
+                except Exception:
+                    pass
+            best = None
+            for frame in container.decode(stream):
+                fts = float(frame.pts * stream.time_base) if frame.pts is not None else ts
+                if fts > ts + 0.05:
+                    break
+                best = frame
+            if best is None:
+                continue
+            img = best.to_image().convert("RGB")
+            if img.width > 640:  # 控体积：复检判断主题无需原始分辨率
+                img = img.resize((640, max(1, int(img.height * 640 / img.width))))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=70)
+            out.append((int(round(ts)), buf.getvalue()))
+        finally:
+            container.close()
+    return out
+
+
+def _fmt_excerpt(lines: list, n: int = 3) -> str:
+    """字幕首/中/尾各取 n 行（供归属复检对照）"""
+    if not lines:
+        return ""
+    if len(lines) <= n * 3:
+        sample = lines
+    else:
+        mid = len(lines) // 2
+        sample = lines[:n] + lines[mid:mid + n] + lines[-n:]
+    return "\n".join(f"[{int(l['start'])}s] {l['text']}" for l in sample)
+
+
+def parse_match_verdict(text: str) -> bool:
+    """解析归属判定：不一致→False；一致→True；其他→保守 False"""
+    t = text or ""
+    if "不一致" in t:
+        return False
+    return "一致" in t
+
+
+def check_subtitle_match(cfg_vision: dict, video_path: str, lines: list,
+                         duration: float = None) -> bool:
+    """字幕归属复检：开头/中间/结尾 3 帧 + 字幕片段 → 多模态判定。
+    返回 True=一致（可采信）/ False=不一致或无法判定（强制 Whisper）。
+    API/解码异常向上抛，由调用方决定降级。"""
+    if not lines:
+        return False
+    frames = extract_frames_at(video_path, pick_edge_timestamps(lines, duration))
+    if not frames:
+        raise VisionError("抽帧失败（无法解码或视频流不可用）")
+    prompt = MATCH_PROMPT + "\n\n【待校验字幕片段（开头/中间/结尾）】\n" + _fmt_excerpt(lines)
+    return parse_match_verdict(describe_video(cfg_vision, frames, prompt=prompt))
