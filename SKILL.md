@@ -11,7 +11,7 @@ description: 将 bilibili 视频总结为中文学习报告。触发词：「总
 ## 工作流
 
 ### 0. 配置（config.json，可选）
-首次运行自动生成 `scripts/config.json`：`out_dir`（默认输出目录）/ `whisper_model`（tiny/small/medium）/ `hf_endpoint`（HF 镜像）/ `hf_disable_xet`。CLI 参数优先于配置。
+首次运行自动生成 `scripts/config.json`：`out_dir`（默认输出目录）/ `whisper_model`（**默认 medium**，可 `--model tiny/small/large-v3` 降级或升级）/ `whisper_vad`（`auto`：长视频默认禁用 VAD、短视频开启；`--vad`/`--no-vad` 手动覆盖）/ `vad_long_sec`（长视频阈值，默认 1800 秒）/ `api_retries`·`api_retry_base`（接口限流重试，默认 4 次 / 1.5s）/ `hf_endpoint`（HF 镜像）/ `hf_disable_xet`。CLI 参数优先于配置。
 
 **第三条路径：多模态复检（可选配置，固定流程）**：
 ```json
@@ -21,10 +21,11 @@ description: 将 bilibili 视频总结为中文学习报告。触发词：「总
   "api_key": "sk-xxx",                        // 用户自有多模态模型 key
   "model": "gpt-4o-mini",                     // 或 qwen-vl-max / gemini-2.0-flash 等
   "max_frames": 30,
-  "max_rounds": 2                              // 复检轮数（一轮效果不佳可继续多轮）
+  "max_rounds": 2,                             // 复检轮数（一轮效果不佳可继续多轮）
+  "subtitle_check": "auto"                     // 字幕归属复检：auto=防线初筛（默认）/always=每个视频都查/off=关闭
 }
 ```
-**工作链条（配置后固定执行）**：① 字幕路径（四道防线）→ ② 无字幕则 Whisper → ③ **对转写资料复检**：
+**工作链条（配置后固定执行）**：① 字幕路径（防线分级；可疑字幕先用多模态 3 帧归属复检裁决）→ ② 无字幕/复检不一致则 Whisper → ③ **对转写资料复检**：
 - **区间选择（模型规划）**：将完整转写文本交给多模态模型，由其挑出「知识点丰富区」——
   **重点识别引导性字眼**位置（「根据」「看一下」「如图」「这张图/表」「演示一下」等，
   这些位置画面往往有重要信息）；区间约 20 秒、**可由模型自定**（10~60s），不固定；
@@ -33,6 +34,14 @@ description: 将 bilibili 视频总结为中文学习报告。触发词：「总
   （`max_rounds`，默认 2）——一次效果不佳可多次复检；无新发现则结束
 - 有遗漏 → 补充并入 subtitle.txt（source 标记 `+vision补充`）→ ④ 报告阶段
 **可选辅助，绝不阻塞原流程**：未配置/API 失败/--no-vision-check 时自动跳过原流程继续。
+
+**字幕归属复检（v3.4，防线过严纠偏 + 错乱字幕拦截）**：字幕初判「可疑」时（关键词零命中、覆盖率 50~60% 边界等），
+按字幕时间轴**开头/中间/结尾各抽 1 帧**（共 3 帧、1 次多模态调用；画面流取最低码率省带宽）交多模态复检：
+- 判定**一致** → 采信字幕（source=`字幕+vision复核`）；**不一致/无法判定** → **强制 Whisper**（错乱字幕场景）
+- 硬信号（末条时长越界 >130%，典型「拉到别的视频字幕」）不走复检、直接 Whisper（省成本）
+- 模式 `vision.subtitle_check`：`auto`（默认，仅可疑时查）/ `always`（全量把关）/ `off`（关闭）；
+  **配置后须告知用户可自选模式，以用户选择为准**
+- 防线阈值已按反馈放宽：覆盖率下限 60%→50%；标题关键词零命中判定需 ≥4 词
 
 ### 复检执行者选择（R12，agent 必须按此决策）
 
@@ -58,7 +67,7 @@ description: 将 bilibili 视频总结为中文学习报告。触发词：「总
 ```bash
 python scripts/bili.py run <输入> [--page N] --out <临时工作目录>
 ```
-- 有字幕：直接落盘字幕文本（自动两次一致性 + 时长覆盖校验，不可信时降级 Whisper）
+- 有字幕：直接落盘字幕文本（两次一致性 + 时长覆盖 + 内容级校验；可疑时多模态 3 帧归属复检，不一致/不可信时降级 Whisper）
 - 无字幕：自动 Whisper 转写（首次需 `pip install faster-whisper`，CPU int8，无需显卡）
 - **国内网络首次下载模型**：设置环境变量后运行 `HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 python scripts/bili.py ...`（HF 直连超时；新版 hub 需禁用 xet 协议）
 - 输出 3 个文件：`video_info.json`（元信息）、`subtitle.txt`（字幕全文）、`report_template.md`（报告骨架）
@@ -148,6 +157,8 @@ python scripts/bili.py run <输入> [--page N] --out <临时工作目录>
 - **运行日志（v2.1）**：每次运行记录到 scripts/logs/bili.log
 - **字幕/转写缓存（v3.3）**：按 (bvid, cid) 缓存到 scripts/cache/，重复处理直接复用（`--no-cache` 强制重取）
 - **请求限流（v3.3）**：批量分P间默认间隔 1.5s（`--interval` 调整），防接口限流导致无谓 Whisper 兜底
+- **接口重试（v3.4）**：412/429/5xx、超时、风控页指数退避重试（默认 4 次，`api_retries`/`api_retry_base` 可配）；412 重试前刷新 cookie
+- **Whisper 参数（v3.4）**：默认模型 medium；长视频（≥`vad_long_sec`）默认禁用 VAD（`--vad` 手动开、`--no-vad` 强制关）
 
 ### 5.1 环境自检与运维（v3.3）
 - `bili doctor`：一条命令诊断 cookie/GPU(cuBLAS·cuDNN)/faster-whisper 版本兼容/模型缓存/输出目录，
