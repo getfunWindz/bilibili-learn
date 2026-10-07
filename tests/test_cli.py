@@ -215,9 +215,9 @@ def test_resume_skips_done_pages(tmp_path):
     })
     orig = bili._process_page
     def spy(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None,
-            no_cache=False, no_vision_check=False):
+            no_cache=False, no_vision_check=False, vad=None):
         processed.append(page_)
-        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache, no_vision_check)
+        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache, no_vision_check, vad)
     bili._process_page = spy
     try:
         bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=None, pages=None,
@@ -304,11 +304,11 @@ def test_batch_writes_progress_incrementally(tmp_path):
     orig = bili._process_page
     calls = {"n": 0}
     def boom(client_, info_, page_, root_, nw_, single_=False, lang=None, model_size=None,
-             no_cache=False, no_vision_check=False):
+             no_cache=False, no_vision_check=False, vad=None):
         calls["n"] += 1
         if calls["n"] == 2:
             raise KeyboardInterrupt()  # 模拟中断
-        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache, no_vision_check)
+        return orig(client_, info_, page_, root_, nw_, single_, lang, model_size, no_cache, no_vision_check, vad)
     bili._process_page = boom
     try:
         with pytest.raises(KeyboardInterrupt):
@@ -363,7 +363,7 @@ def test_model_param_priority_over_config(tmp_path, monkeypatch):
     import transcriber
     seen = []
     orig = transcriber.transcribe_video
-    def spy(client, bvid, cid, model_size="small", progress_callback=None):
+    def spy(client, bvid, cid, model_size="medium", progress_callback=None, **kw):
         seen.append(model_size)
         return [{"start": 0.0, "end": 1.0, "text": "x"}]
     monkeypatch.setattr(transcriber, "transcribe_video", spy)
@@ -533,3 +533,41 @@ def test_invalid_subtitle_skips_vision_check(tmp_path, monkeypatch):
                                     no_whisper=False, pick=1, lang=None, model=None),
                  client=InvalidClient())
     assert called["n"] == 0
+
+
+# ---------- VAD / medium 默认（Task 5） ----------
+
+def test_vad_flag_reaches_transcriber(tmp_path, monkeypatch):
+    """--vad 手动开启：透传到 transcriber（长视频默认关闭）"""
+    import config as cfg
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "none.json"))
+    import transcriber as tr_mod
+    seen = {}
+    def spy(client, bvid, cid, **kw):
+        seen.update(kw)
+        return [{"start": 0.0, "end": 1.0, "text": "w"}]
+    monkeypatch.setattr(tr_mod, "transcribe_video", spy)
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None, vad=True),
+                 client=FakeClient(lines=None))
+    assert seen["vad"] is True
+    assert seen["model_size"] == "medium"
+    assert seen["duration_sec"] == 100
+
+def test_whisper_default_model_medium(tmp_path, monkeypatch):
+    """无 --model 时用配置默认 medium（用户可降级/升级）"""
+    import config as cfg
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "none.json"))
+    import transcriber as tr_mod
+    seen = {}
+    def spy(client, bvid, cid, **kw):
+        seen.update(kw)
+        return [{"start": 0.0, "end": 1.0, "text": "w"}]
+    monkeypatch.setattr(tr_mod, "transcribe_video", spy)
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=FakeClient(lines=None))
+    assert seen["model_size"] == "medium"
+    assert seen["vad"] is None  # config 默认 auto → 由 transcriber 按视频时长决策
