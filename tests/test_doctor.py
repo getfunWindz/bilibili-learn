@@ -87,3 +87,28 @@ def test_doctor_main_runs():
     """doctor main 应以 0 退出且输出诊断行（不触发网络，靠注入）"""
     code = doctor.main(["cookie", "gpu", "whisper"])
     assert code == 0
+
+
+def test_check_vision_reports_mode(monkeypatch):
+    """vision 已配置时报告字幕复检模式（配置后告知用户可自选 auto/always/off）"""
+    import config as cfg
+    monkeypatch.setattr(cfg, "load_config",
+                        lambda: {"vision": {"enabled": True, "subtitle_check": "auto"}})
+    v = doctor.check_vision()
+    assert v["enabled"] is True and v["subtitle_check"] == "auto"
+
+
+def test_check_vision_defaults_when_unconfigured(monkeypatch):
+    import config as cfg
+    monkeypatch.setattr(cfg, "load_config", lambda: {})
+    v = doctor.check_vision()
+    assert v["enabled"] is False and v["subtitle_check"] == "auto"
+
+
+def test_doctor_main_survives_gbk_console(monkeypatch):
+    """Windows GBK 控制台：emoji 输出不应崩溃（stdout 重配置 utf-8/replace）"""
+    import io
+    monkeypatch.setattr(doctor, "check_cookie", lambda client=None: True)
+    wrapper = io.TextIOWrapper(io.BytesIO(), encoding="gbk", errors="strict")
+    monkeypatch.setattr(sys, "stdout", wrapper)
+    assert doctor.main(["cookie"]) == 0

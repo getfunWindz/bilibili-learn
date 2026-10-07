@@ -84,6 +84,25 @@ def check_models() -> dict:
             "cache_dir": cache}
 
 
+def check_vision() -> dict:
+    """vision 配置状态与字幕复检模式（配置后告知用户可自选 auto/always/off）"""
+    try:
+        import config
+        v = (config.load_config().get("vision") or {})
+    except Exception:
+        v = {}
+    return {"enabled": bool(v.get("enabled")),
+            "subtitle_check": v.get("subtitle_check", "auto")}
+
+
+def _ensure_utf8_stdout() -> None:
+    """Windows GBK 控制台无法编码 emoji（✅/❌/👁️）→ stdout 重配置为 utf-8（失败则忽略）"""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
 def check_out_dir(path: str = "") -> dict:
     """输出目录可写性"""
     path = path or os.getcwd()
@@ -99,6 +118,7 @@ def check_out_dir(path: str = "") -> dict:
 
 def main(argv=None) -> int:
     """CLI 入口。bili.py 子命令 doctor 调用本函数。"""
+    _ensure_utf8_stdout()
     import api_client  # noqa: F401  确保 api_client 可导入（cookie 检查用）
     args = sys.argv[1:] if argv is None else argv
     print("=== bilibili-learn 环境自检 ===")
@@ -120,6 +140,11 @@ def main(argv=None) -> int:
         print(f"✅ 模型缓存：{', '.join(m['models'])}（{m['cache_dir']}）")
     else:
         print(f"⚠️ 模型缓存为空：首次转写将自动下载（国内网络可设 HF_ENDPOINT=https://hf-mirror.com）")
+    # vision 复检模式（配置后告知用户可自选）
+    vi = check_vision()
+    if vi["enabled"]:
+        print(f"👁️ vision：已启用；字幕复检模式={vi['subtitle_check']}"
+              f"（可选 auto/always/off，以你的选择为准）")
     # 输出目录
     o = check_out_dir()
     print(f"{'✅' if o['ok'] else '❌'} 输出目录：{o['path']}")
