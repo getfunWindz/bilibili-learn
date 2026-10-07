@@ -209,6 +209,9 @@ class ApiClient:
         for attempt in range(2):
             lines = self._fetch_subtitle_once(bvid, cid, lang)
             if not lines:
+                if last is not None and last.lines:
+                    # 接口闪断：首抓有内容、二抓为空 → 保留候选交多模态复检，而非直接判无字幕
+                    return SubtitleResult(last.lines, "suspect", "二次获取为空")
                 return SubtitleResult([], "empty", "无字幕")
             status, reason = self._subtitle_verdict(lines, title, desc, duration)
             if status == "invalid":
