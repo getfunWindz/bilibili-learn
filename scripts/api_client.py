@@ -50,11 +50,25 @@ class SubtitleLine:
                 and self.end == other.end
                 and self.content == other.content)
 
+
+class SubtitleResult:
+    """字幕抓取分级结果：ok=可信 / suspect=软可疑（可多模态复检拯救）/ invalid=硬不可信 / empty=无字幕"""
+    def __init__(self, lines: list, status: str, reason: str = ""):
+        self.lines, self.status, self.reason = lines, status, reason
+
+
+# 字幕校验阈值（v3.4 放宽，D3 决策：覆盖下限 60%→50%；关键词零命中判定需 ≥4 词）
+COVERAGE_MIN_RATIO = 0.5
+COVERAGE_MAX_RATIO = 1.3
+MIN_SUBTITLE_LINES = 10
+KEYWORD_MIN_COUNT = 4
+
 # wbi 签名打乱表（bilibili 公开算法）
 _WBI_TAB = [46,47,18,2,53,8,23,32,15,50,10,31,58,3,45,35,27,43,5,49,33,9,42,19,29,28,14,39,12,38,41,13,37,48,7,16,24,55,40,61,26,17,0,1,60,51,30,4,22,25,54,21,56,59,6,63,57,62,11,36,20,34,44,52]
 
 import hashlib
 import os
+import random
 import time
 import urllib.parse
 
@@ -138,38 +152,77 @@ class ApiClient:
 
     def get_subtitle_text(self, bvid: str, cid: int, duration: int = None, attempts: int = 2,
                           lang: str = None, title: str = "", desc: str = "") -> list:
-        """下载字幕全文。接口不稳定（降级/内容错乱）时：
-        连续两次内容一致 + 时长覆盖达标 + 内容级校验（B1）才可信；否则返回 []，由上层降级 Whisper。
-        lang: 指定字幕语言（zh/ja/en 等），None 时自动（中文优先）"""
-        first = None
-        for i in range(max(2, attempts)):
+        """兼容包装：仅返回可信字幕（ok），其余返回 [] 由上层降级/复检"""
+        res = self.fetch_subtitle(bvid, cid, duration=duration, lang=lang,
+                                  title=title, desc=desc)
+        return res.lines if res.status == "ok" else []
+
+    def fetch_subtitle(self, bvid: str, cid: int, duration: int = None, lang: str = None,
+                       title: str = "", desc: str = "") -> "SubtitleResult":
+        """抓取字幕并分级（最多两次抓取）：
+        - 无字幕 → empty（不再重抓，省请求）
+        - 越界 → invalid（硬不可信，不再重抓）
+        - 首抓 ok → 二次确认：两次一致 → ok；不一致 → suspect（保留候选）
+        - 首抓 suspect → 二次抓取：二次 ok → 仍标 suspect（候选用二次的，交多模态裁决）
+        - 两次均 suspect → suspect（候选取更长者）"""
+        last = None
+        for attempt in range(2):
             lines = self._fetch_subtitle_once(bvid, cid, lang)
-            if not self._subtitle_complete(lines, duration):
-                time.sleep(2)
+            if not lines:
+                return SubtitleResult([], "empty", "无字幕")
+            status, reason = self._subtitle_verdict(lines, title, desc, duration)
+            if status == "invalid":
+                return SubtitleResult(lines, "invalid", reason)
+            if attempt == 0:
+                last = SubtitleResult(lines, status, reason)
+                time.sleep(random.uniform(0.8, 1.5))  # 抖动间隔，拿独立的第二次抓取
                 continue
-            if not self._subtitle_plausible(lines, title, desc, duration)[0]:
-                # B1：内容错乱（歌词/影视剧/标题无关）→ 不可信，降级 Whisper
-                return []
-            if first is None:
-                first = lines
-                time.sleep(2)
-                continue
-            if lines == first:
-                return lines  # 两次一致且覆盖完整 → 可信
-            return []  # 两次内容不同 → 接口错乱，宁可走 Whisper
-        return first or []
+            # 第二次抓取
+            if status == "ok":
+                if last.status == "ok" and lines == last.lines:
+                    return SubtitleResult(lines, "ok", "")
+                if last.status == "ok":
+                    return SubtitleResult(lines, "suspect", "两次获取内容不一致")
+                return SubtitleResult(lines, "suspect", f"首次可疑({last.reason})")
+            cand = lines if len(lines) >= len(last.lines) else last.lines
+            return SubtitleResult(cand, "suspect", reason or last.reason)
+        return last or SubtitleResult([], "empty", "无字幕")
 
     @staticmethod
     def _subtitle_complete(lines: list, duration: int = None) -> bool:
         """字幕完整性：行数足够 + 时间覆盖视频主体（防御错乱歌词/残缺/错位字幕）
-        下限：末条 ≥ 60% 时长（防覆盖不足）；上限：末条 ≤ 130% 时长（防错位字幕超长）"""
-        if not lines or len(lines) < 10:
+        下限：末条 ≥ 50% 时长（v3.4 放宽，原 60%）；上限：末条 ≤ 130% 时长（防错位字幕超长）"""
+        if not lines or len(lines) < MIN_SUBTITLE_LINES:
             return False
         if duration:
             last = lines[-1].end
-            if last < duration * 0.6 or last > duration * 1.3:
+            if last < duration * COVERAGE_MIN_RATIO or last > duration * COVERAGE_MAX_RATIO:
                 return False
         return True
+
+    @staticmethod
+    def _subtitle_verdict(lines: list, title: str = "", desc: str = "",
+                          duration: int = None) -> tuple:
+        """字幕分级：返回 (status, reason)
+        - invalid：时长越界（末条 > 130% 时长，典型"拉取了别的视频字幕"）→ 强制 Whisper
+        - suspect：覆盖不足/行数偏少/歌词/标题关键词零命中/行密度异常 → 可多模态复检
+        - ok：结构完整且内容合理
+        阈值放宽（D3 决策，v3.4）：覆盖下限 60%→50%；标题关键词零命中判定需 ≥4 词。
+        """
+        if not lines:
+            return "empty", "无字幕"
+        if duration:
+            last = lines[-1].end
+            if last > duration * COVERAGE_MAX_RATIO:
+                return "invalid", f"时长越界({last:.0f}s>{duration * COVERAGE_MAX_RATIO:.0f}s)"
+            if last < duration * COVERAGE_MIN_RATIO or len(lines) < MIN_SUBTITLE_LINES:
+                return "suspect", f"覆盖不足({len(lines)}行 末条{last:.0f}s)"
+        elif len(lines) < MIN_SUBTITLE_LINES:
+            return "suspect", f"行数偏少({len(lines)}行)"
+        plausible, reason = ApiClient._subtitle_plausible(lines, title, desc, duration)
+        if not plausible:
+            return "suspect", reason
+        return "ok", ""
 
     @staticmethod
     def _subtitle_plausible(lines: list, title: str = "", desc: str = "",
@@ -185,8 +238,9 @@ class ApiClient:
             return False, "歌词特征(♪)"
         # ② 标题关键词重叠：标题提取出的关键词（中文 2-gram + 英文词）
         #    在字幕中完全零命中 → 内容与标题无关（Whisper 音译变体如 kb cash 也能被中文 2-gram 兜住）
+        #    v3.4 放宽：仅当关键词 ≥4 个时才判定，避免短标题/泛化标题误杀
         kws = ApiClient._extract_keywords(title)
-        if len(kws) >= 2:
+        if len(kws) >= KEYWORD_MIN_COUNT:
             hits = sum(1 for k in kws if k.lower() in text.lower())
             if hits == 0:
                 return False, f"标题关键词零命中({len(kws)}词)"

@@ -199,6 +199,32 @@ def test_api_error_raises_bili_error():
     with pytest.raises(BiliError):
         client.get_video_info(bvid="BVxxx")
 
+
+def test_fetch_subtitle_suspect_keeps_candidate():
+    """可疑字幕不再直接丢弃：返回 suspect + 候选行（供多模态复检）"""
+    subs = [{"lan": "ai-zh", "lan_doc": "中文", "subtitle_url": "//s1.hdslb.com/x.json"}]
+    body = [{"from": i * 1.0, "to": i * 1.0 + 0.9, "content": f"词{i}"} for i in range(12)]
+    client = make_client(subtitles=subs, sub_body=body)
+    res = client.fetch_subtitle("BV1GJ411x7h7", 1001, duration=900, title="KV Cache 原理")
+    assert res.status == "suspect"
+    assert len(res.lines) == 12 and res.reason
+
+
+def test_fetch_subtitle_ok():
+    subs = [{"lan": "ai-zh", "lan_doc": "中文", "subtitle_url": "//s1.hdslb.com/x.json"}]
+    body = [{"from": i * 1.0, "to": i * 1.0 + 0.9, "content": f"稳定{i}"} for i in range(12)]
+    client = make_client(subtitles=subs, sub_body=body)
+    res = client.fetch_subtitle("BV1GJ411x7h7", 1001)
+    assert res.status == "ok" and len(res.lines) == 12
+
+
+def test_fetch_subtitle_invalid_overrun():
+    subs = [{"lan": "ai-zh", "lan_doc": "中文", "subtitle_url": "//s1.hdslb.com/x.json"}]
+    body = [{"from": i * 10.0, "to": i * 10.0 + 9.0, "content": f"错位{i}"} for i in range(12)]
+    client = make_client(subtitles=subs, sub_body=body)
+    res = client.fetch_subtitle("BV1GJ411x7h7", 1001, duration=60)
+    assert res.status == "invalid"
+
 def test_non_json_response_friendly_error():
     client = ApiClient(FakeSession(lambda p, q: "<!DOCTYPE html><html>风控页</html>"))
     with pytest.raises(BiliError) as e:
