@@ -6,7 +6,9 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 
 DEFAULT_CONFIG = {
     "out_dir": "",              # 默认输出根目录（--out 未指定时使用）
-    "whisper_model": "small",   # whisper 模型大小：tiny/small/medium/large-v3
+    "whisper_model": "medium",  # 默认 medium；用户可降级 tiny/small 或升级 large-v3
+    "whisper_vad": "auto",    # auto=长视频默认关、短视频开；true/false 强制
+    "vad_long_sec": 1800,      # “长视频”阈值（秒）：≥ 该值时默认禁用 VAD
     "hf_endpoint": "",          # HF 镜像（如 https://hf-mirror.com），空则用官方
     "hf_disable_xet": True,     # 禁用 HF xet 协议（镜像站必需）
     "api_retries": 4,           # 接口限流/风控重试次数（指数退避；D4 决策：默认 4 次）

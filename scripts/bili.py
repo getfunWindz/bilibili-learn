@@ -266,7 +266,7 @@ def _vision_verify_subtitle(client, bvid: str, cid: int, cfg_vision: dict, lines
 
 
 def _process_page(client, info, page, out_root, no_whisper, single=False, lang=None,
-                  model_size=None, no_cache=False, no_vision_check=False):
+                  model_size=None, no_cache=False, no_vision_check=False, vad=None):
     """处理单个 P：取字幕/whisper/视觉 → 落盘。返回 (status, subtitle_source, line_count, out_dir, error)"""
     page_obj = info.page_by_index(page)
     # C3：命中缓存直接复用（避免重复下载/转写）
@@ -319,13 +319,18 @@ def _process_page(client, info, page, out_root, no_whisper, single=False, lang=N
             import transcriber
             print(f"  P{page} 无字幕，启用 Whisper 转写……", file=sys.stderr)
             cfg = config.load_config()
+            mode = cfg.get("whisper_vad", "auto")
+            vad_mode = vad if vad is not None else (None if mode == "auto" else bool(mode))
             def _progress(done, total):
                 pct = int(done / total * 100) if total else 0
                 if pct % 10 == 0:
                     print(f"    转写进度 {pct}%", file=sys.stderr, end="\r")
             lines = transcriber.transcribe_video(client, info.bvid, page_obj.cid,
-                                                 model_size=model_size or "small",
-                                                 progress_callback=_progress)
+                                                 model_size=model_size or cfg.get("whisper_model") or "medium",
+                                                 progress_callback=_progress,
+                                                 vad=vad_mode,
+                                                 duration_sec=page_obj.duration,
+                                                 vad_long_sec=cfg.get("vad_long_sec", 1800))
             print("", file=sys.stderr)
             src = "whisper"
         except transcriber.WhisperNotInstalled:
@@ -385,7 +390,8 @@ def _run_batch(client, info, pages, args, out_root):
                                                lang=getattr(args, "lang", None),
                                                model_size=getattr(args, "model", None),
                                                no_cache=getattr(args, "no_cache", False),
-                                               no_vision_check=getattr(args, "no_vision_check", False))
+                                               no_vision_check=getattr(args, "no_vision_check", False),
+                                               vad=getattr(args, "vad", None))
         elapsed = time.time() - t0
         if i < len(pages):
             time.sleep(getattr(args, "interval", 1.5))  # D3：请求间隔限流
@@ -606,7 +612,8 @@ def cmd_run(args, client: ApiClient = None):
                                                          lang=getattr(args, "lang", None),
                                                          model_size=getattr(args, "model", None),
                                                          no_cache=getattr(args, "no_cache", False),
-                                                         no_vision_check=getattr(args, "no_vision_check", False))
+                                                         no_vision_check=getattr(args, "no_vision_check", False),
+                                                         vad=getattr(args, "vad", None))
             if status != "ok":
                 msgs = {"no_subtitle": "该视频无字幕（--no-whisper 已跳过转写）",
                         "failed": "获取失败",
@@ -669,6 +676,11 @@ def main(argv=None):
     run.add_argument("--resume", action="store_true", help="跳过已成功处理的P（断点续跑）")
     run.add_argument("--lang", default=None, help='字幕语言（zh/ja/en等，默认自动中文优先）')
     run.add_argument("--model", default=None, help="whisper 模型（tiny/small/medium/large-v3，默认 config.whisper_model）")
+    gv = run.add_mutually_exclusive_group()
+    gv.add_argument("--vad", dest="vad", action="store_true",
+                    help="强制开启 Whisper VAD（长视频默认关闭，可手动打开）")
+    gv.add_argument("--no-vad", dest="vad", action="store_false", help="强制关闭 Whisper VAD")
+    run.set_defaults(vad=None)
     run.add_argument("--no-vision-check", action="store_true", help="关闭多模态复检（默认开启：配置 vision 后固定执行）")
     run.add_argument("--out", default=None, help="输出根目录（默认 config.out_dir 或 output）")
     run.add_argument("--no-whisper", action="store_true", help="无字幕时不转写直接失败")

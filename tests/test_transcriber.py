@@ -101,7 +101,46 @@ def test_transcribe_video_flow(tmp_path, monkeypatch):
     client = FakeClient()
     monkeypatch.setattr(transcriber, "download_audio", lambda url, dest: dest)
     monkeypatch.setattr(transcriber, "transcribe",
-                        lambda path, model_size="small", progress_callback=None: [{"start": 0.0, "end": 1.0, "text": "hi"}])
+                        lambda path, model_size="medium", progress_callback=None, **kw: [{"start": 0.0, "end": 1.0, "text": "hi"}])
     out = transcriber.transcribe_video(client, "BV1GJ411x7h7", 1001)
     assert out == [{"start": 0.0, "end": 1.0, "text": "hi"}]
     assert client.url_called == ("BV1GJ411x7h7", 1001)
+
+
+# ---------- VAD 策略：长视频默认禁用，可手动打开 ----------
+
+def _fake_model_factory(calls):
+    class FakeModel:
+        def __init__(self, *a, **k): pass
+        def transcribe(self, audio_path, language="zh", vad_filter=False, log_progress=None, progress_callback=None):
+            calls.append(vad_filter)
+            class S: pass
+            s = S(); s.start, s.end, s.text = 0.0, 1.0, "ok"
+            return [s], None
+    return FakeModel
+
+def test_vad_plan_forced_on():
+    assert transcriber._vad_plan(True, 7200) == [True]
+    assert transcriber._vad_plan(False, 10) == [False]
+
+def test_vad_plan_long_video_default_off():
+    assert transcriber._vad_plan(None, 7200) == [False]       # 长视频默认禁 VAD（不回退）
+    assert transcriber._vad_plan(None, 600) == [True, False]  # 短视频保持原兜底
+
+def test_transcribe_long_video_disables_vad(monkeypatch):
+    calls = []
+    monkeypatch.setattr(transcriber, "_load_whisper", lambda: _fake_model_factory(calls))
+    monkeypatch.setattr(transcriber, "detect_device", lambda: "cpu")
+    transcriber.transcribe("x.m4s", duration_sec=7200)
+    assert calls == [False]
+
+def test_transcribe_vad_manual_on(monkeypatch):
+    calls = []
+    monkeypatch.setattr(transcriber, "_load_whisper", lambda: _fake_model_factory(calls))
+    monkeypatch.setattr(transcriber, "detect_device", lambda: "cpu")
+    transcriber.transcribe("x.m4s", duration_sec=7200, vad=True)
+    assert calls == [True]
+
+def test_default_model_is_medium():
+    import inspect
+    assert inspect.signature(transcriber.transcribe).parameters["model_size"].default == "medium"
