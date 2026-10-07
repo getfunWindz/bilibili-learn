@@ -225,6 +225,19 @@ def test_fetch_subtitle_invalid_overrun():
     res = client.fetch_subtitle("BV1GJ411x7h7", 1001, duration=60)
     assert res.status == "invalid"
 
+
+def test_video_url_lowest_picks_min_bandwidth():
+    """归属复检用最低码率流（省带宽）"""
+    def handler(path, params):
+        if path == "/x/player/playurl":
+            return {"code": 0, "data": {"dash": {"video": [
+                {"bandwidth": 100, "baseUrl": "http://lowv"},
+                {"bandwidth": 800, "baseUrl": "http://highv"}]}}}
+        raise AssertionError(path)
+    client = ApiClient(FakeSession(handler))
+    assert client.get_video_url("BV1GJ411x7h7", 1001, lowest=True) == "http://lowv"
+    assert client.get_video_url("BV1GJ411x7h7", 1001) == "http://highv"
+
 def test_non_json_response_friendly_error():
     client = ApiClient(FakeSession(lambda p, q: "<!DOCTYPE html><html>风控页</html>"))
     with pytest.raises(BiliError) as e:

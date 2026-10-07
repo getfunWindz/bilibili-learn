@@ -236,6 +236,35 @@ def _vision_check(client, bvid: str, cid: int, cfg_vision: dict, lines: list, du
     return sup
 
 
+def _want_subtitle_check(cfg_vision: dict, status: str) -> bool:
+    """是否执行字幕归属复检：always/true 恒查；off/false 关闭；auto（默认）仅可疑字幕"""
+    if not cfg_vision.get("enabled") or not cfg_vision.get("api_key"):
+        return False
+    mode = cfg_vision.get("subtitle_check", "auto")
+    if mode in (False, "off", "false", None):
+        return False
+    if mode in (True, "always", "true"):
+        return True
+    return status == "suspect"
+
+
+def _vision_verify_subtitle(client, bvid: str, cid: int, cfg_vision: dict, lines: list,
+                            duration: float):
+    """字幕归属复检：最低码率画面流 → 首/中/尾 3 帧 → 多模态判定。
+    返回 True=一致（采信）/ False=不一致（强制 Whisper）/ None=未执行"""
+    import tempfile
+    import vision
+    import transcriber as tr
+    if not lines:
+        return None
+    print("  · 字幕可疑：多模态归属复检（开头/中间/结尾 3 帧）……", file=sys.stderr)
+    url = client.get_video_url(bvid, cid, lowest=True)  # 低码率流：判主题足够，省带宽
+    with tempfile.TemporaryDirectory() as td:
+        vp = os.path.join(td, "video.m4s")
+        tr.download_audio(url, vp)  # 复用流式下载（任意二进制）
+        return vision.check_subtitle_match(cfg_vision, vp, lines, duration)
+
+
 def _process_page(client, info, page, out_root, no_whisper, single=False, lang=None,
                   model_size=None, no_cache=False, no_vision_check=False):
     """处理单个 P：取字幕/whisper/视觉 → 落盘。返回 (status, subtitle_source, line_count, out_dir, error)"""
@@ -255,15 +284,34 @@ def _process_page(client, info, page, out_root, no_whisper, single=False, lang=N
                 out_dir = os.path.join(out_root, f"P{page:02d}")
                 _write_outputs(out_dir, info, page, lines, "cache")
             return "ok", "cache", len(lines), out_dir, ""
+    src = "字幕"
     try:
-        lines = [{"start": l.start, "end": l.end, "text": l.content}
-                 for l in client.get_subtitle_text(info.bvid, page_obj.cid, duration=page_obj.duration,
-                                                   lang=lang, title=info.title, desc=info.desc)]
+        res = client.fetch_subtitle(info.bvid, page_obj.cid, duration=page_obj.duration,
+                                    lang=lang, title=info.title, desc=info.desc)
     except Exception as e:
         err = str(e)[:100]
         print(f"  P{page} 字幕获取失败：{err}", file=sys.stderr)
         return "failed", "", 0, "", err
-    src = "字幕"
+    lines = [{"start": l.start, "end": l.end, "text": l.content} for l in res.lines]
+    if res.status == "suspect":
+        cfgv0 = config.load_config().get("vision", {})
+        verdict = None
+        if not no_vision_check and _want_subtitle_check(cfgv0, res.status):
+            try:
+                verdict = _vision_verify_subtitle(client, info.bvid, page_obj.cid, cfgv0,
+                                                  lines, page_obj.duration)
+            except Exception as e:
+                print(f"  P{page} 字幕归属复检失败（保守降级）：{str(e)[:80]}", file=sys.stderr)
+        if verdict is True:
+            src = "字幕+vision复核"
+            print(f"  P{page} 字幕归属复检通过（原判可疑：{res.reason}）", file=sys.stderr)
+        else:
+            why = "归属复检不一致" if verdict is False else f"可疑（{res.reason}）"
+            print(f"  P{page} 字幕{why} → 强制 Whisper", file=sys.stderr)
+            lines = []
+    elif res.status == "invalid":
+        print(f"  P{page} 字幕不可信（{res.reason}）→ 强制 Whisper", file=sys.stderr)
+        lines = []
     if not lines:
         if no_whisper:
             return "no_subtitle", src, 0, "", "无字幕且 --no-whisper 跳过转写"
