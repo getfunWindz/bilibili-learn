@@ -42,8 +42,8 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 | 能力 | 说明 |
 |------|------|
 | 🎯 输入自由 | 链接 / BV / av / 名称 / UP 主 都能定位视频 |
-| 🛡️ 字幕四防线 | 两次一致性 + 时长覆盖率 + 上下限校验 + **内容级校验**（标题关键词零命中/歌词/行密度异常 → 自动降级 Whisper） |
-| 🔊 Whisper 兜底 | 无字幕视频自动转写：GPU 自动注入 cuBLAS/cuDNN、GPU 误报回退 CPU、VAD 滤空自动重试、语气词清洗 |
+| 🛡️ 字幕防线 + 归属复检 | 两次一致性 + 覆盖率（≥50%）+ 内容级校验（歌词/密度/关键词零命中）；**可疑字幕抽首/中/尾 3 帧交多模态复核**：一致采信、不一致强制 Whisper（拦截错乱字幕） |
+| 🔊 Whisper 兜底 | 无字幕视频自动转写：默认 **medium** 模型、GPU 自动注入 cuBLAS/cuDNN、GPU 误报回退 CPU、**长视频默认禁用 VAD**（`--vad` 手动开）、语气词清洗 |
 | 📚 批量多 P | `--pages "1-100"` 断点续跑、失败不中断、进度与预计剩余时间、**请求限流**（`--interval`） |
 | ⚡ 字幕/转写缓存 | 按 (bvid, cid) 缓存到 scripts/cache/，重复处理直接复用（`--no-cache` 强制重取） |
 | 🔖 名词注释（v3.3） | 每个知识点末尾附「名词注释」小节（书籍式脚注），术语库 `references/glossary.json` 跨报告复用、自动沉淀 |
@@ -61,7 +61,7 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 </p>
 
 1. **定位**：链接/BV/av 直接解析；名称/UP 主走官方搜索（wbi 签名）
-2. **获取**：AI 字幕优先（三防线校验），无字幕降级 faster-whisper 本地转写（CPU/GPU 自适应，无需系统 ffmpeg）
+2. **获取**：AI 字幕优先（防线分级 + 多模态归属复检），无字幕/字幕不可信时降级 faster-whisper 本地转写（CPU/GPU 自适应，无需系统 ffmpeg）
 3. **批量**：多 P 循环处理，每 P 完成后增量写汇总，中断可 `--resume` 续跑
 4. **分析**：agent 读取各 P 字幕做相关性聚类，决定总报告（按P分章）或独立报告
 5. **交付**：报告写入同步盘 `bilibili学习笔记/<UP主>/`，可按需导出 Word/HTML
@@ -73,7 +73,7 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 | `bili resolve <输入>` | 解析链接/BV/av → bvid/页码 |
 | `bili search <关键词>` | 搜索视频候选（需登录 cookie） |
 | `bili favs` | 列出账号全部收藏夹（需登录 cookie） |
-| `bili run <输入> [--page N \| --pages "1-10" \| --all]` | 获取字幕/转写并落盘；`--resume` 断点续跑；`--lang ja/en` 多语言字幕；`--model medium` 转写模型 |
+| `bili run <输入> [--page N \| --pages "1-10" \| --all]` | 获取字幕/转写并落盘；`--resume` 断点续跑；`--lang ja/en` 多语言字幕；`--model` 转写模型（默认 medium）；`--vad`/`--no-vad` 手动开关 VAD（长视频默认关） |
 | `bili run --fav <收藏夹名\|id> --pick N` | 直接总结收藏夹内第 N 个视频（输入参数可省略） |
 | `bili run <输入> --no-vision-check` | 关闭多模态复检（默认开启：配置 vision 后固定执行） |
 | `bili report <目录>` | 从已有字幕重新生成报告骨架（改模板后无需重抓） |
@@ -82,7 +82,7 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 | `bili merge <src合集> <dst合集>` | 合并跨天/重复生成的合集目录（复制缺失 P，不覆盖已有） |
 | `bili favs-scan <收藏夹id\|名称> [--filter 关键词] [--priority] [--snapshot]` | 扫描收藏夹：拉全量 + 主题过滤 + 播放量优先级排序（建议处理顺序）+ 失效统计 + 快照 |
 | `python scripts/glossary.py list \| add <术语> <解释> \| check <报告.md> <字幕.txt>` | 术语库管理（自动沉淀）与报告校验（注释缺失 / 知识点覆盖遗漏） |
-| `python -m pytest tests/ -v` | 运行全部单元测试（99 个，全部 mock 网络，离线可跑） |
+| `python -m pytest tests/ -v` | 运行全部单元测试（157 个，全部 mock 网络，离线可跑） |
 
 ## 配置（可选）
 
@@ -91,7 +91,11 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 ```json
 {
   "out_dir": "",              // 默认输出目录（--out 未传时使用）
-  "whisper_model": "small",   // tiny/small/medium/large-v3
+  "whisper_model": "medium",  // 默认 medium（可用 --model 降级 tiny/small 或升级 large-v3）
+  "whisper_vad": "auto",      // auto=长视频默认禁用 VAD、短视频开启；true/false 强制（--vad/--no-vad 覆盖）
+  "vad_long_sec": 1800,       // “长视频”阈值（秒）
+  "api_retries": 4,           // 接口限流/风控重试次数（指数退避）
+  "api_retry_base": 1.5,      // 退避基数（秒）
   "hf_endpoint": "",          // HF 镜像（如 https://hf-mirror.com）
   "hf_disable_xet": true      // 镜像站必需
 }
@@ -110,16 +114,20 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
   "api_key": "sk-xxx",                       // 自有多模态模型 key
   "model": "gpt-4o-mini",
   "max_frames": 30,
-  "max_rounds": 2                            // 复检轮数
+  "max_rounds": 2,                           // 复检轮数
+  "subtitle_check": "auto"                   // 字幕归属复检：auto=防线初筛（默认）/always=全量/off=关闭
 }
 ```
 
-**工作链条**：① 先取字幕（四道防线校验）→ ② 无字幕则 Whisper 转写 → ③ **对转写资料复检**：
+**工作链条**：① 先取字幕（防线分级；可疑字幕用 3 帧归属复检裁决）→ ② 无字幕/复检不一致则 Whisper 转写 → ③ **对转写资料复检**：
 - **区间选择（模型规划）**：把完整转写文本交给多模态模型挑出「知识点丰富区」——重点识别
   **引导性字眼**（「根据」「看一下」「如图」「这张表」「演示一下」等），区间约 20 秒、由模型自定（10~60s）
 - **多轮复检**：每轮对区间每秒抽帧、判断材料遗漏；有新发现则继续下一轮（`max_rounds`，默认 2）
 - 有遗漏 → 补充并入 subtitle.txt；无遗漏 → 通过 → ④ 报告阶段
 
+- **字幕归属复检（v3.4）**：防线判「可疑」时按字幕时间轴抽**开头/中间/结尾 3 帧**（1 次调用、最低码率流）复核；
+  一致 → 采信（`字幕+vision复核`），不一致/无法判定 → **强制 Whisper**；时长越界（>130%，典型的“拉到别的视频字幕”）直接 Whisper；
+  模式 `subtitle_check`：`auto`（默认，仅可疑时查）/`always`（全量把关）/`off`（关闭）——**配置后请按用户选择为准**
 - `--no-vision-check` 可显式关闭复检
 - **可选辅助，绝不阻塞原流程**：未配置 / API 失败时自动跳过，原有字幕/Whisper 流程继续
 - 转写结果与字幕同格式（带时间戳），agent 总结规则（R1-R11）完全复用
@@ -153,9 +161,17 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 - **工程化**：字幕/转写缓存、批量请求限流（`--interval`）、跨天目录合并（`merge`）、多 P 时长校验回归测试
 - 单元测试 74 → **99**，全部离线可跑
 
+## v3.4 更新（2026-10-07）
+
+- **字幕归属复检**：可疑字幕抽「开头/中间/结尾」3 帧交多模态复核——一致采信、不一致强制 Whisper；时长越界等硬信号直接 Whisper；模式 `subtitle_check: auto/always/off`
+- **防线放宽（按用户反馈）**：覆盖率下限 60%→50%；标题关键词零命中判定需 ≥4 词，减少误杀
+- **限流重试**：412/429/5xx/超时/风控页指数退避重试（默认 4 次，`api_retries`/`api_retry_base` 可配）；412 重试前刷新 cookie
+- **Whisper 调优**：默认模型 medium；长视频默认禁用 VAD（`--vad` 手动开、`--no-vad` 强制关）
+- 单元测试 121 → 157，全部离线可跑
+
 ## 测试与安全
 
-- **99 个单元测试**：`python -m pytest tests/ -v`（全部 mock 网络，离线可跑）
+- **157 个单元测试**：`python -m pytest tests/ -v`（全部 mock 网络，离线可跑）
 - **登录 cookie 仅存于本地** `scripts/.bili_cookie`（gitignore），上传仓库时已排除；代码中只有 `SESSDATA=xxx` 占位示例
 - 无 cookie 时降级可用：视频信息 + Whisper 转写仍正常工作，仅搜索与 AI 字幕受限
 
