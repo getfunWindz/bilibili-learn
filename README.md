@@ -82,7 +82,7 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 | `bili merge <src合集> <dst合集>` | 合并跨天/重复生成的合集目录（复制缺失 P，不覆盖已有） |
 | `bili favs-scan <收藏夹id\|名称> [--filter 关键词] [--priority] [--snapshot]` | 扫描收藏夹：拉全量 + 主题过滤 + 播放量优先级排序（建议处理顺序）+ 失效统计 + 快照 |
 | `python scripts/glossary.py list \| add <术语> <解释> \| check <报告.md> <字幕.txt>` | 术语库管理（自动沉淀）与报告校验（注释缺失 / 知识点覆盖遗漏） |
-| `python -m pytest tests/ -v` | 运行全部单元测试（157 个，全部 mock 网络，离线可跑） |
+| `python -m pytest tests/ -v` | 运行全部单元测试（160 个，全部 mock 网络，离线可跑） |
 
 ## 配置（可选）
 
@@ -167,11 +167,11 @@ python scripts/bili.py export "D:\学习笔记\王小二数据分析\2026-08-20_
 - **防线放宽（按用户反馈）**：覆盖率下限 60%→50%；标题关键词零命中判定需 ≥4 词，减少误杀
 - **限流重试**：412/429/5xx/超时/风控页指数退避重试（默认 4 次，`api_retries`/`api_retry_base` 可配）；412 重试前刷新 cookie
 - **Whisper 调优**：默认模型 medium；长视频默认禁用 VAD（`--vad` 手动开、`--no-vad` 强制关）
-- 单元测试 121 → 157，全部离线可跑
+- 单元测试 121 → 160，全部离线可跑
 
 ## 测试与安全
 
-- **157 个单元测试**：`python -m pytest tests/ -v`（全部 mock 网络，离线可跑）
+- **160 个单元测试**：`python -m pytest tests/ -v`（全部 mock 网络，离线可跑）
 - **登录 cookie 仅存于本地** `scripts/.bili_cookie`（gitignore），上传仓库时已排除；代码中只有 `SESSDATA=xxx` 占位示例
 - 无 cookie 时降级可用：视频信息 + Whisper 转写仍正常工作，仅搜索与 AI 字幕受限
 
