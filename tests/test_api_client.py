@@ -226,6 +226,26 @@ def test_fetch_subtitle_invalid_overrun():
     assert res.status == "invalid"
 
 
+def test_fetch_subtitle_second_empty_keeps_candidate():
+    """二次抓取为空（接口闪断）→ suspect 保留首抓候选（可交多模态复检），而非直接 empty"""
+    subs = [{"lan": "ai-zh", "lan_doc": "中文", "subtitle_url": "//s1.hdslb.com/x.json"}]
+    body = [{"from": i * 1.0, "to": i * 1.0 + 0.9, "content": f"稳定{i}"} for i in range(12)]
+    calls = {"n": 0}
+    def handler(path, params):
+        if path == "/x/web-interface/nav":
+            return {"code": 0, "data": {"wbi_img": {"img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png", "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}
+        if path == "/x/player/v2":
+            return {"code": 0, "data": {"subtitle": {"subtitles": subs}}}
+        if path.startswith("https://"):
+            calls["n"] += 1
+            return {"font_size": 0.4, "body": body if calls["n"] == 1 else []}
+        raise AssertionError(path)
+    client = ApiClient(FakeSession(handler), warm=False)
+    res = client.fetch_subtitle("BV1GJ411x7h7", 1001)
+    assert res.status == "suspect" and "为空" in res.reason
+    assert len(res.lines) == 12
+
+
 def test_video_url_lowest_picks_min_bandwidth():
     """归属复检用最低码率流（省带宽）"""
     def handler(path, params):
