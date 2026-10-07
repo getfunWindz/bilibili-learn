@@ -463,6 +463,22 @@ def test_page_and_pages_mutually_exclusive():
         bili.main(["run", "BV1GJ411x7h7", "--page", "2", "--all"])
 
 
+def test_vad_flags_mutually_exclusive():
+    """--vad 与 --no-vad 互斥（argparse 拒绝同时传入）"""
+    with pytest.raises(SystemExit):
+        bili.main(["run", "BV1GJ411x7h7", "--vad", "--no-vad"])
+
+
+def test_want_subtitle_check_modes():
+    """字幕复检模式三态：auto=仅可疑 / always=恒查 / off=关闭（用户可自选）"""
+    cfg_on = {"enabled": True, "api_key": "k"}
+    assert bili._want_subtitle_check(cfg_on, "suspect") is True    # auto：可疑时查
+    assert bili._want_subtitle_check(cfg_on, "ok") is False        # auto：可信不查
+    assert bili._want_subtitle_check({**cfg_on, "subtitle_check": "always"}, "ok") is True
+    assert bili._want_subtitle_check({**cfg_on, "subtitle_check": "off"}, "suspect") is False
+    assert bili._want_subtitle_check({"enabled": False}, "suspect") is False
+
+
 # ---------- 字幕归属复检接线（可疑字幕 → 多模态裁决 → 强制 Whisper） ----------
 
 class SuspectClient(FakeClient):
