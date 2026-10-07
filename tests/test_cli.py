@@ -24,6 +24,12 @@ class FakeClient:
             return []
         from api_client import SubtitleLine
         return [SubtitleLine(l["start"], l["end"], l["text"]) for l in self.lines]
+    def fetch_subtitle(self, bvid, cid, duration=None, lang=None, title="", desc=""):
+        from api_client import SubtitleResult, SubtitleLine
+        if self.lines is None:
+            return SubtitleResult([], "empty", "无字幕")
+        return SubtitleResult(
+            [SubtitleLine(l["start"], l["end"], l["text"]) for l in self.lines], "ok", "")
     def search(self, keyword, limit=5):
         return self.search_out
 
@@ -110,6 +116,13 @@ class MultiPageClient:
         if raw is None:
             return []
         return [SubtitleLine(l["start"], l["end"], l["text"]) for l in raw]
+    def fetch_subtitle(self, bvid, cid, duration=None, lang=None, title="", desc=""):
+        from api_client import SubtitleResult, SubtitleLine
+        raw = self.lines_map.get(cid)
+        if raw is None:
+            return SubtitleResult([], "empty", "无字幕")
+        return SubtitleResult(
+            [SubtitleLine(l["start"], l["end"], l["text"]) for l in raw], "ok", "")
     def search(self, keyword, limit=5):
         return []
 
@@ -448,3 +461,75 @@ def test_frames_command_saves_jpegs(tmp_path, monkeypatch):
 def test_page_and_pages_mutually_exclusive():
     with pytest.raises(SystemExit):
         bili.main(["run", "BV1GJ411x7h7", "--page", "2", "--all"])
+
+
+# ---------- 字幕归属复检接线（可疑字幕 → 多模态裁决 → 强制 Whisper） ----------
+
+class SuspectClient(FakeClient):
+    """返回可疑字幕的假客户端（用于复检接线测试）"""
+    def fetch_subtitle(self, bvid, cid, duration=None, lang=None, title="", desc=""):
+        from api_client import SubtitleResult, SubtitleLine
+        return SubtitleResult(
+            [SubtitleLine(l["start"], l["end"], l["text"]) for l in self.lines],
+            "suspect", "标题关键词零命中")
+
+class InvalidClient(SuspectClient):
+    def fetch_subtitle(self, bvid, cid, duration=None, lang=None, title="", desc=""):
+        from api_client import SubtitleResult
+        return SubtitleResult([], "invalid", "时长越界")
+
+
+def test_suspect_subtitle_rescued_by_vision(tmp_path, monkeypatch):
+    """可疑字幕 + 多模态复检通过 → 采信字幕，不调用 Whisper"""
+    import transcriber as tr_mod
+    monkeypatch.setattr(tr_mod, "transcribe_video",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应调用 Whisper")))
+    monkeypatch.setattr(bili, "_vision_verify_subtitle", lambda *a, **k: True)
+    monkeypatch.setattr(bili, "_vision_check", lambda *a, **k: [])
+    monkeypatch.setattr(bili.config, "load_config",
+                        lambda: {"vision": {"enabled": True, "api_key": "k"}})
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=SuspectClient())
+    rd = report_dir(out)
+    info = json.load(open(os.path.join(rd, "video_info.json"), encoding="utf-8"))
+    assert info["subtitle_source"] == "字幕+vision复核"
+
+
+def test_suspect_subtitle_mismatch_forces_whisper(tmp_path, monkeypatch):
+    """复检判定不一致 → 强制 Whisper（错乱字幕场景）"""
+    import transcriber as tr_mod
+    monkeypatch.setattr(tr_mod, "transcribe_video",
+                        lambda *a, **k: [{"start": 0.0, "end": 1.0, "text": "whisper 转写"}])
+    monkeypatch.setattr(bili, "_vision_verify_subtitle", lambda *a, **k: False)
+    monkeypatch.setattr(bili, "_vision_check", lambda *a, **k: [])
+    monkeypatch.setattr(bili.config, "load_config",
+                        lambda: {"vision": {"enabled": True, "api_key": "k"}})
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=SuspectClient())
+    rd = report_dir(out)
+    info = json.load(open(os.path.join(rd, "video_info.json"), encoding="utf-8"))
+    assert info["subtitle_source"] == "whisper"
+
+
+def test_invalid_subtitle_skips_vision_check(tmp_path, monkeypatch):
+    """硬不可信（越界）→ 不调用多模态，直接 Whisper（省成本）"""
+    called = {"n": 0}
+    def spy(*a, **k):
+        called["n"] += 1
+        return True
+    import transcriber
+    monkeypatch.setattr(transcriber, "transcribe_video",
+                        lambda *a, **k: [{"start": 0.0, "end": 1.0, "text": "w"}])
+    monkeypatch.setattr(bili, "_vision_verify_subtitle", spy)
+    monkeypatch.setattr(bili, "_vision_check", lambda *a, **k: [])
+    monkeypatch.setattr(bili.config, "load_config",
+                        lambda: {"vision": {"enabled": True, "api_key": "k"}})
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=InvalidClient())
+    assert called["n"] == 0
