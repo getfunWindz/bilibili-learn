@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320"
      role="img" aria-labelledby="title desc">
   <title id="title">bilibili-learn 工作原理</title>
-  <desc id="desc">流程：输入视频链接或名称，定位视频，获取字幕（三道防线校验）或 Whisper 转写兜底，批量处理多分P，按相关性聚类生成中文详解报告并导出。</desc>
+  <desc id="desc">流程：输入视频链接或名称，定位视频，获取字幕（防线分级 + 多模态归属复检）或 Whisper 转写兜底，批量处理多分P，按相关性聚类生成中文详解报告并导出。</desc>
 
   <rect width="1200" height="320" rx="26" fill="#0B0E14"/>
 
@@ -23,7 +23,7 @@
     <rect x="0" y="0" width="260" height="110" rx="12" fill="#131722" stroke="#2A3142" stroke-width="1.5"/>
     <text x="130" y="32" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
           font-size="17" fill="#FB7299">获取内容</text>
-    <text x="130" y="60" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">AI 字幕 <tspan font-family="ui-monospace, Menlo, monospace" font-size="15" fill="#00A1D6">三防线校验</tspan></text>
+    <text x="130" y="60" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">AI 字幕 <tspan font-family="ui-monospace, Menlo, monospace" font-size="15" fill="#00A1D6">防线分级+复检</tspan></text>
     <text x="130" y="88" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#F5F7FA">无字幕 → <tspan fill="#8A93A5">Whisper</tspan> 兜底</text>
   </g>
   <g transform="translate(548 114)">
