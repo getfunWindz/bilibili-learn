@@ -102,3 +102,48 @@ def test_complete_with_single_page_duration():
     # 正常边界：末条 610s ∈ [615*0.6, 615*1.3] → 可信
     ok_lines = [SL(0, 610.0, "正常结尾")]
     assert ApiClient._subtitle_complete(ok_lines + _lines(NORMAL_TEXTS), 615)
+
+
+# ---------- 分级判定（suspect/invalid） ----------
+
+def test_verdict_normal_ok():
+    lines = _lines(NORMAL_TEXTS)
+    status, reason = ApiClient._subtitle_verdict(lines, TITLE_KV, "", 800)
+    assert status == "ok" and reason == ""
+
+def test_verdict_overrun_invalid():
+    from api_client import SubtitleLine as SL
+    lines = _lines(NORMAL_TEXTS) + [SL(0.0, 10109.0, "越界")]
+    status, reason = ApiClient._subtitle_verdict(lines, TITLE_KV, "", 615)
+    assert status == "invalid" and "越界" in reason
+
+def test_verdict_keyword_zero_hit_suspect():
+    lines = _lines(RANGE_TEXTS)
+    status, reason = ApiClient._subtitle_verdict(lines, TITLE_KV, "", 500)
+    assert status == "suspect" and "零命中" in reason
+
+def test_verdict_short_coverage_suspect():
+    from api_client import SubtitleLine as SL
+    lines = [SL(i * 1.0, i * 1.0 + 0.9, f"第{i}句") for i in range(12)]  # 覆盖 12s
+    status, reason = ApiClient._subtitle_verdict(lines, "", "", 900)
+    assert status == "suspect" and "覆盖不足" in reason
+
+# ---------- 放宽阈值（D3 决策：防线已多次被判过严，略微放宽） ----------
+
+def test_verdict_relaxed_coverage_50pct():
+    """覆盖 53%（原 60% 会误杀）→ 判 ok"""
+    lines = _lines(NORMAL_TEXTS[:12])  # 12 行 × 2s = 24s，末条 24s
+    status, reason = ApiClient._subtitle_verdict(lines, TITLE_KV, "", 45)
+    assert status == "ok", f"放宽后仍误杀：{status}/{reason}"
+
+def test_verdict_relaxed_keyword_few_words():
+    """标题关键词不足 4 个（原 ≥2 词就查）→ 不做零命中判定，不误杀"""
+    lines = _lines(RANGE_TEXTS)
+    status, reason = ApiClient._subtitle_verdict(lines, "随便聊聊", "", 900)
+    assert status == "ok", f"少关键词标题被误杀：{status}/{reason}"
+
+def test_verdict_keyword_enough_words_still_flagged():
+    """关键词 ≥4 词且零命中 → 仍判可疑（错乱防线保留）"""
+    lines = _lines(RANGE_TEXTS)
+    status, reason = ApiClient._subtitle_verdict(lines, TITLE_KV, "", 500)
+    assert status == "suspect" and "零命中" in reason
