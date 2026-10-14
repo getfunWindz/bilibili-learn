@@ -551,6 +551,66 @@ def test_invalid_subtitle_skips_vision_check(tmp_path, monkeypatch):
     assert called["n"] == 0
 
 
+def test_ok_subtitle_always_mode_runs_vision_check(tmp_path, monkeypatch):
+    """always=全量把关：ok 字幕也执行归属复检（缺陷修复：此前仅 suspect 分支触发）"""
+    called = {"n": 0}
+    def fake_verify(*a, **k):
+        called["n"] += 1
+        return True
+    import transcriber as tr_mod
+    monkeypatch.setattr(tr_mod, "transcribe_video",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应调用 Whisper")))
+    monkeypatch.setattr(bili, "_vision_verify_subtitle", fake_verify)
+    monkeypatch.setattr(bili, "_vision_check", lambda *a, **k: [])
+    monkeypatch.setattr(bili.config, "load_config",
+                        lambda: {"vision": {"enabled": True, "api_key": "k",
+                                            "subtitle_check": "always"}})
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=FakeClient())
+    rd = report_dir(out)
+    info = json.load(open(os.path.join(rd, "video_info.json"), encoding="utf-8"))
+    assert called["n"] == 1
+    assert info["subtitle_source"] == "字幕+vision复核"
+
+
+def test_ok_subtitle_always_mode_mismatch_forces_whisper(tmp_path, monkeypatch):
+    """always 模式下 ok 字幕复检不一致 → 同样强制 Whisper（全量把关）"""
+    import transcriber as tr_mod
+    monkeypatch.setattr(tr_mod, "transcribe_video",
+                        lambda *a, **k: [{"start": 0.0, "end": 1.0, "text": "whisper 转写"}])
+    monkeypatch.setattr(bili, "_vision_verify_subtitle", lambda *a, **k: False)
+    monkeypatch.setattr(bili, "_vision_check", lambda *a, **k: [])
+    monkeypatch.setattr(bili.config, "load_config",
+                        lambda: {"vision": {"enabled": True, "api_key": "k",
+                                            "subtitle_check": "always"}})
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=FakeClient())
+    rd = report_dir(out)
+    info = json.load(open(os.path.join(rd, "video_info.json"), encoding="utf-8"))
+    assert info["subtitle_source"] == "whisper"
+
+
+def test_ok_subtitle_auto_mode_skips_vision_check(tmp_path, monkeypatch):
+    """auto（默认）：ok 字幕不触发归属复检（成本约束）"""
+    called = {"n": 0}
+    def spy(*a, **k):
+        called["n"] += 1
+        return True
+    monkeypatch.setattr(bili, "_vision_verify_subtitle", spy)
+    monkeypatch.setattr(bili, "_vision_check", lambda *a, **k: [])
+    monkeypatch.setattr(bili.config, "load_config",
+                        lambda: {"vision": {"enabled": True, "api_key": "k"}})
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=FakeClient())
+    assert called["n"] == 0
+
+
 # ---------- VAD / medium 默认（Task 5） ----------
 
 def test_vad_flag_reaches_transcriber(tmp_path, monkeypatch):

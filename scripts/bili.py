@@ -271,7 +271,7 @@ def _vision_verify_subtitle(client, bvid: str, cid: int, cfg_vision: dict, lines
     import transcriber as tr
     if not lines:
         return None
-    print("  · 字幕可疑：多模态归属复检（开头/中间/结尾 3 帧）……", file=sys.stderr)
+    print("  · 字幕归属复检（开头/中间/结尾 3 帧）……", file=sys.stderr)
     url = client.get_video_url(bvid, cid, lowest=True)  # 低码率流：判主题足够，省带宽
     with tempfile.TemporaryDirectory() as td:
         vp = os.path.join(td, "video.m4s")
@@ -307,21 +307,34 @@ def _process_page(client, info, page, out_root, no_whisper, single=False, lang=N
         print(f"  P{page} 字幕获取失败：{err}", file=sys.stderr)
         return "failed", "", 0, "", err
     lines = [{"start": l.start, "end": l.end, "text": l.content} for l in res.lines]
-    if res.status == "suspect":
+    if res.status in ("suspect", "ok"):
         cfgv0 = config.load_config().get("vision", {})
-        verdict = None
         if not no_vision_check and _want_subtitle_check(cfgv0, res.status):
+            verdict = None
             try:
                 verdict = _vision_verify_subtitle(client, info.bvid, page_obj.cid, cfgv0,
                                                   lines, page_obj.duration)
             except Exception as e:
-                print(f"  P{page} 字幕归属复检失败（保守降级）：{str(e)[:80]}", file=sys.stderr)
-        if verdict is True:
-            src = "字幕+vision复核"
-            print(f"  P{page} 字幕归属复检通过（原判可疑：{res.reason}）", file=sys.stderr)
-        else:
-            why = "归属复检不一致" if verdict is False else f"可疑（{res.reason}）"
-            print(f"  P{page} 字幕{why} → 强制 Whisper", file=sys.stderr)
+                print(f"  P{page} 字幕归属复检失败：{str(e)[:80]}", file=sys.stderr)
+            if verdict is True:
+                src = "字幕+vision复核"
+                if res.status == "suspect":
+                    print(f"  P{page} 字幕归属复检通过（原判可疑：{res.reason}）", file=sys.stderr)
+                else:
+                    print(f"  P{page} 字幕归属复检通过（always 全量把关）", file=sys.stderr)
+            elif verdict is False:
+                print(f"  P{page} 字幕归属复检不一致 → 强制 Whisper", file=sys.stderr)
+                lines = []
+            elif res.status == "suspect":
+                # 可疑字幕复检未执行（关闭/异常）：保守降级强制 Whisper
+                print(f"  P{page} 字幕可疑（{res.reason}）且复检未执行 → 强制 Whisper", file=sys.stderr)
+                lines = []
+            else:
+                # ok 字幕复检未执行（异常）：静态防线已通过，保持原判
+                print(f"  P{page} 归属复检未执行，保持原判（字幕 ok）", file=sys.stderr)
+        elif res.status == "suspect":
+            # 未启用/关闭复检：可疑字幕保守降级强制 Whisper（保持原语义）
+            print(f"  P{page} 字幕可疑（{res.reason}）且未启用复检 → 强制 Whisper", file=sys.stderr)
             lines = []
     elif res.status == "invalid":
         print(f"  P{page} 字幕不可信（{res.reason}）→ 强制 Whisper", file=sys.stderr)
