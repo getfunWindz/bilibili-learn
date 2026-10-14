@@ -248,6 +248,20 @@ def _want_subtitle_check(cfg_vision: dict, status: str) -> bool:
     return status == "suspect"
 
 
+def _resolve_vad_mode(mode):
+    """whisper_vad 配置值 → VAD 模式：True/False 强制，None=auto（由视频时长决策）。
+    显式映射字符串 true/false——修复 bool("false")=True 导致用户意图反转。"""
+    if isinstance(mode, bool):
+        return mode
+    if isinstance(mode, str):
+        v = mode.strip().lower()
+        if v == "true":
+            return True
+        if v == "false":
+            return False
+    return None
+
+
 def _vision_verify_subtitle(client, bvid: str, cid: int, cfg_vision: dict, lines: list,
                             duration: float):
     """字幕归属复检：最低码率画面流 → 首/中/尾 3 帧 → 多模态判定。
@@ -320,7 +334,12 @@ def _process_page(client, info, page, out_root, no_whisper, single=False, lang=N
             print(f"  P{page} 无字幕，启用 Whisper 转写……", file=sys.stderr)
             cfg = config.load_config()
             mode = cfg.get("whisper_vad", "auto")
-            vad_mode = vad if vad is not None else (None if mode == "auto" else bool(mode))
+            if vad is not None:
+                vad_mode = vad
+            else:
+                vad_mode = _resolve_vad_mode(mode)
+                if vad_mode is None and str(mode).strip().lower() not in ("", "auto", "none"):
+                    print(f"  whisper_vad 配置值 {mode!r} 无法识别，按 auto 处理", file=sys.stderr)
             def _progress(done, total):
                 pct = int(done / total * 100) if total else 0
                 if pct % 10 == 0:

@@ -587,3 +587,32 @@ def test_whisper_default_model_medium(tmp_path, monkeypatch):
                  client=FakeClient(lines=None))
     assert seen["model_size"] == "medium"
     assert seen["vad"] is None  # config 默认 auto → 由 transcriber 按视频时长决策
+
+
+def test_resolve_vad_mode_strings():
+    """whisper_vad 字符串 "true"/"false" 正确解析（缺陷修复：bool("false") 曾误判为 True）"""
+    assert bili._resolve_vad_mode("false") is False
+    assert bili._resolve_vad_mode("true") is True
+    assert bili._resolve_vad_mode(False) is False
+    assert bili._resolve_vad_mode(True) is True
+    assert bili._resolve_vad_mode("auto") is None
+    assert bili._resolve_vad_mode("bogus") is None
+
+
+def test_config_whisper_vad_false_string(tmp_path, monkeypatch):
+    """whisper_vad="false"（字符串）→ 透传 vad=False（长视频也不启用 VAD）"""
+    import config as cfg
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"whisper_vad": "false"}), encoding="utf-8")
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(p))
+    import transcriber as tr_mod
+    seen = {}
+    def spy(client, bvid, cid, **kw):
+        seen.update(kw)
+        return [{"start": 0.0, "end": 1.0, "text": "w"}]
+    monkeypatch.setattr(tr_mod, "transcribe_video", spy)
+    out = tmp_path / "out"
+    bili.cmd_run(argparse.Namespace(input="BV1GJ411x7h7", page=1, out=str(out),
+                                    no_whisper=False, pick=1, lang=None, model=None),
+                 client=FakeClient(lines=None))
+    assert seen["vad"] is False
