@@ -21,6 +21,7 @@ DEFAULT_CONFIG = {
         "frame_interval": 10,   # 抽帧间隔（秒）
         "max_frames": 30,       # 最多帧数
         "max_rounds": 2,        # 复检最大轮数（一轮效果不佳可继续多轮）
+        "subtitle_check": "auto",  # 字幕归属复检：auto=仅可疑/always=全量/off=关闭
         "prompt": ""            # 自定义视觉转写提示词（空则用默认）
     },
 }

@@ -60,3 +60,19 @@ def test_vision_config_partial_merge(tmp_path, monkeypatch):
     assert v["enabled"] is True and v["api_key"] == "sk-x"
     assert v["model"] == "qwen-vl-max"
     assert v["frame_interval"] == 10  # 缺失字段用默认
+
+
+def test_vision_subtitle_check_roundtrip(tmp_path, monkeypatch):
+    """D3 三态：用户写入 subtitle_check 必须原样保留（此前被嵌套默认键白名单静默丢弃）"""
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"vision": {"enabled": True, "api_key": "k",
+                                        "subtitle_check": "always"}}), encoding="utf-8")
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(p))
+    assert cfg.load_config()["vision"]["subtitle_check"] == "always"
+    p2 = tmp_path / "config2.json"
+    p2.write_text(json.dumps({"vision": {"enabled": True, "subtitle_check": "off"}}), encoding="utf-8")
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(p2))
+    assert cfg.load_config()["vision"]["subtitle_check"] == "off"
+    # 未配置时默认 auto
+    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "none.json"))
+    assert cfg.load_config()["vision"]["subtitle_check"] == "auto"
