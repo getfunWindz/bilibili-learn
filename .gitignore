@@ -18,3 +18,6 @@ push_batches/
 scripts_backup_20260822/
 PLAN_优化计划_2026-08-22.md
 push_batches/
+
+# 开发过程文件（不公开；仅本地保留——公开仓库只含源代码与产品文件）
+docs/
